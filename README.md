@@ -1,49 +1,83 @@
 # dream-recomp
 
-Turns a Sega Dreamcast game into a native program for your own machine.
+dream-recomp takes a Sega Dreamcast disc image and produces a native executable for macOS, Windows
+or Linux. It reads the game's SH-4 machine code once, ahead of time, translates it into C++, and
+hands that to your compiler. The program you end up with contains no SH-4 instructions.
 
-Not an emulator. An emulator reads the game's original instructions and acts them out, one at a
-time, every time you play. This reads them **once**, ahead of time, and writes out the equivalent
-C++ — which your compiler then optimises like any other source code. The result is a normal
-executable for macOS, Windows or Linux, with no SH-4 processor left anywhere in it.
+This is static recompilation, the approach taken by
+[N64Recomp](https://github.com/Mr-Wiseguy/N64Recomp) and
+[XenonRecomp](https://github.com/hedge-dev/XenonRecomp), aimed at the Dreamcast's SH-4 and at the
+Katana SDK that most Dreamcast games were built with.
 
-The same approach as [N64Recomp](https://github.com/Mr-Wiseguy/N64Recomp) and
-[XenonRecomp](https://github.com/hedge-dev/XenonRecomp), aimed at the Dreamcast's SH-4 and the
-Katana SDK most Dreamcast games were built with.
+You supply the game. Nothing here contains Sega code or data, and none is ever committed. You need
+to dump your own game legally.
 
-**You supply the game.** Nothing here contains any Sega code or data, and none is ever committed.
-You need your own disc, dumped yourself, of a game you own.
+## Core concepts
 
-## What actually works today
+**Translation happens at build time.** The translator reads the game's boot executable, decodes it
+into SH-4 instructions, and emits one C++ function per guest function. Guest registers become local
+variables. Your compiler then optimises the result like any other source file.
 
-Being straight about this, because the gap between "it translates" and "it plays" is the whole
-project:
+**Coverage is partial and you close the gap by hand.** Discovery starts at the entry point and
+follows calls and branches, which finds roughly 79–90% of a typical binary. What it misses is code
+reachable only through computed jumps, jump tables and data-driven dispatch. The build prints how
+much it decoded:
+
+```text
+coverage: 490480 of 621888 bytes decoded (78.9%); 118480 bytes are neither
+instruction nor literal pool, in 727 runs of 16 bytes or more
+```
+
+The runs it lists are the regions to investigate when the game stops somewhere. You seed the
+missing addresses in the title's config and rebuild, and each seed usually pulls in more than one
+function. See [docs/emitter-design.md](docs/emitter-design.md).
+
+**A development interpreter covers what is still missing.** Building with
+`DREAM_DEV_INTERPRETER=ON` keeps an SH-4 interpreter in the binary as a fallback for untranslated
+code. Without it, the program stops at the first gap. No title is complete enough to build without
+it yet.
+
+**Hardware is emulated, console software is replaced.**
+
+| Layer | Approach | What that means |
+|---|---|---|
+| CPU | Compiled | Each guest function becomes a C++ function. Registers are local variables. A release build has no interpreter. |
+| Memory | Emulated | 16 MB RAM, 8 MB video memory in both of the hardware's two views, store queues. Address translation is a mask and an index. |
+| Graphics | Emulated, low level | PowerVR2 display lists are decoded and drawn through Vulkan. The game talks to the hardware as it always did. |
+| Audio | Emulated, low level | The game's own sound driver runs on an emulated ARM7, feeding an emulated mixer. |
+| BIOS and disc | Replaced, high level | Console BIOS calls and the GD-ROM filesystem are answered by native code. No BIOS image is needed. |
+
+Anything the game touches directly is emulated at the hardware level, because that is where games
+depend on exact behaviour. The console's own firmware is replaced with native equivalents, which
+also keeps a BIOS dump out of the requirements.
+
+**Each title is a directory.** `games/<id>/` holds a TOML config describing the binary's load
+addresses and any hand-seeded functions, plus a one-line `CMakeLists.txt`. The top-level build
+globs `games/*` and picks up anything with a `CMakeLists.txt` in it, so adding a title means adding
+a directory. A title's target is a no-op for anyone without that title's extracted files, which is
+how the repository can carry configs without carrying games.
+
+## What works today
 
 | Title | Translates | Builds | Runs |
 |---|---|---|---|
-| Crazy Taxi | yes | yes | **plays**: boots, music, memory-card save, title screen, menus, attract sequence. Crashes entering a race. |
+| Crazy Taxi | yes | yes | **plays**: Full music and gameplay as well as saves. Played a good round without crashes |
 | Tech Romancer | yes | yes | boots, draws its options screen |
-| Metropolis Street Racer | yes | yes | boots and runs, but slowly: its disc carries five code files and only the loader is configured, so almost everything falls back to the interpreter |
+| Metropolis Street Racer | yes | yes | boots and runs slowly. Its disc carries five code files and only the loader is configured, so almost everything falls back to the interpreter. |
 | Charge 'N Blast | yes | yes | boots, reads the disc, renders |
 
-So: one title is genuinely playable up to a point. If you bring your own game, expect it to
-translate, build, and then stop somewhere. The tooling for finding out *where* and *why* is the
-part that is actually mature, and it is described below.
+One title is playable up to a point. If you bring your own game, expect it to translate, build, and
+then stop somewhere. The tooling for finding out where and why is the mature part of this project,
+and it is covered under [When it stops](#when-it-stops).
 
-The last two rows are the ones to read twice. Getting either to *build and boot* took one command
-and no code; getting one to run *well* is the work.
-
-Roughly 79–90% of each binary's code is found automatically (`docs/emitter-design.md`). The rest is
-what you go and find.
-
-## What you need
+## Requirements
 
 - CMake 3.24+, a C++20 compiler (Apple clang, clang 16+, or MSVC 2022), Python 3.9+, git
-- A disc image you dumped yourself: `.chd` or `.gdi`
-- For a window and sound: Vulkan (MoltenVK on macOS), SDL3, and `glslc`. All optional — without
-  them everything still builds and runs headless.
+- A disc image you dumped yourself, `.chd` or `.gdi`
+- For a window and sound: Vulkan (MoltenVK on macOS), SDL3, and `glslc`. These are optional;
+  without them everything still builds and runs headless.
 
-## Build
+## Build the toolchain
 
 ```sh
 git clone --recurse-submodules <this repo>
@@ -51,39 +85,27 @@ cd dream-recomp
 cmake -S . -B build -DDREAM_DEV_INTERPRETER=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
-pip install -e tools/dcdisc        # the disc tool
+pip install -e tools/dcdisc
 ```
 
-Check the machine first if you like:
+`dcdisc doctor` checks the machine and reports what is present, what is missing, and which of it
+is required.
 
-```sh
-dcdisc doctor
-```
+The renderer is on by default (`DREAM_RENDERER`) and skips itself if Vulkan, SDL3 or `glslc` are
+missing; CMake prints what it found. Only `--window` needs them.
 
-It lists what is present and what is missing, and says which of it is actually required.
-
-**`DREAM_DEV_INTERPRETER=ON` is the one option that matters.** It keeps a fallback interpreter in
-the build for any code the translator did not find. Turn it on: without it the program stops dead at
-the first gap, which is by design, and no title is yet complete enough to go without it.
-
-The renderer is on by default (`DREAM_RENDERER`), and quietly skips itself if Vulkan, SDL3 or
-`glslc` are missing — CMake prints what it found. Everything still builds and runs headless without
-them; only `--window` needs them.
-
-## Recompile your own game
-
-### The short version
+## Getting started
 
 ```sh
 tools/new-game.sh ~/discs/mygame.chd
 ```
 
-It asks for the few things it cannot work out — the title, a short id, where to put things — and
-does the rest: reads the disc, writes the config and the build file, configures, builds, and offers
-a first run. Point it at a *folder* of images instead and it lists them to pick from.
+This is the fastest way in. It asks for the few things it cannot read off the disc — the title, a
+short id, where to put things — then reads the disc, extracts it, writes the config and the build
+file, builds, and offers a first run. Point it at a folder of images instead and it lists them to
+pick from. It prints every command before running it, so you can follow what it did.
 
-It prints every command before running it, because the point is to save the typing rather than to
-hide what happened. The same three steps by hand:
+The same steps by hand:
 
 ```sh
 dcdisc new-game mygame.chd                       # extract, write the config and the build file
@@ -91,87 +113,54 @@ cmake --build build --target mygame_boot -j8
 build/games/mygame/mygame_boot --config games/mygame/mygame.toml --window
 ```
 
-That is genuinely it for a title that boots. `new-game` reads the name, region, product number and
-boot filename out of the disc's own header, so it gets right the things that are easy to assume
-wrongly — Charge 'N Blast's boot file is `1ST_READ.US`, not the `1ST_READ.BIN` everything else
-hard-codes. The long version below is the same thing done by hand, and is worth reading once so the
-files those commands write are not a mystery.
+`new-game` reads the name, region, product number and boot filename out of the disc's own IP.BIN
+header, so it picks up the details that are easy to assume wrongly. Charge 'N Blast's boot file is
+`1ST_READ.US`, where most tooling hard-codes `1ST_READ.BIN`. It also refuses Windows CE titles,
+which are out of scope: those games do not use the Katana SDK, and they are about a tenth of the
+library.
 
-### The long version
+### What it writes
 
-Six steps. Crazy Taxi is the worked example; substitute your own title throughout.
-
-### 1. Check the disc
-
-```sh
-dcdisc inspect mygame.chd -o report.md
-```
-
-Read the report before going further. Two things decide whether to continue:
-
-- **Windows CE titles are out of scope.** The tool says so and exits non-zero. Roughly a tenth of
-  the library is Windows CE; those games do not use the Katana SDK and nothing here applies.
-- **How many files look like code.** One is the easy case. Several means the game loads modules at
-  run time, and you will have to describe each one.
-
-### 2. Extract it
-
-```sh
-dcdisc extract mygame.chd games/mygame/extracted
-```
-
-This writes the filesystem under `extracted/fs/` and unscrambles the boot executable if needed.
-Everything under `games/*/extracted/` is gitignored and must stay that way.
-
-### 3. Describe it
-
-Create `games/mygame/mygame.toml`. The minimum is genuinely this small:
+`games/mygame/mygame.toml`, the title's config:
 
 ```toml
 [game]
 id = "mygame"
 title = "My Game"
+region = "JUE"
+product = "T-1234N"
+
+[disc]
+image = "../../../discs/mygame.chd"
 
 [binary]
 path = "extracted/fs/1ST_READ.BIN"
-load_address = 0x8C010000     # where the console's BIOS loads the file
-link_address = 0x0C010000     # the same RAM through a different address; what the code assumes
-entry = 0x8C010000            # the first instruction
+load_address = 0x8C010000    # where the console's BIOS loads the file
+link_address = 0x0C010000    # the same RAM through a different address; what the code assumes
+entry = 0x8C010000           # the first instruction
 ```
 
-Those addresses are the same for nearly every Dreamcast game, so start by copying them. Full
-reference, including games that copy code around at run time: [docs/game-config.md](docs/game-config.md).
+Those addresses hold for nearly every Dreamcast game. The disc image is referenced where it
+already lives rather than copied in. Relocations, overlays, symbol files and the `[functions]
+extra` seeds are all documented in [docs/game-config.md](docs/game-config.md).
 
-### 4. Add it to the build
-
-Copy `games/techromancer/CMakeLists.txt` into `games/mygame/`, replace `techromancer` with
-`mygame` throughout, and add one line to the top-level `CMakeLists.txt`:
+`games/mygame/CMakeLists.txt`, one line:
 
 ```cmake
-add_subdirectory(games/mygame)
+dream_add_game(mygame TITLE "My Game")
 ```
 
-It is a no-op for anyone without your extracted files, which is why the repository can carry game
-configs without carrying games.
+Everything that target does lives in `cmake/DreamAddGame.cmake`. Nothing needs editing at the top
+level.
 
-### 5. Build it
+Extraction lands under `games/mygame/extracted/`, with the filesystem in `extracted/fs/` and the
+boot executable unscrambled if it needed it. That directory is gitignored and must stay that way.
 
-```sh
-cmake --build build --target mygame_boot --parallel
-```
+To look at a disc without committing to it, `dcdisc inspect mygame.chd -o report.md` writes a
+report. The number worth reading is how many files look like code: one is the straightforward
+case, several means the game loads modules at run time and you will need to describe each one.
 
-The translation happens during this build. Watch for the line that says how much of the binary was
-decoded:
-
-```text
-coverage: 490480 of 621888 bytes decoded (78.9%); 118480 bytes are neither
-instruction nor literal pool, in 727 runs of 16 bytes or more
-```
-
-That is not a score to optimise. It tells you how much code exists that the program does not yet
-contain, and the runs it lists are where to look when something goes wrong later.
-
-### 6. Run it
+## Running
 
 ```sh
 build/games/mygame/mygame_boot --config games/mygame/mygame.toml --window
@@ -182,80 +171,59 @@ triggers, `F10` toggles the frame-rate counter, escape quits.
 
 Useful flags: `--scale 2` draws at higher internal resolution, `--vmu FILE.bin` supplies a memory
 card, `--fps` starts with the frame-rate counter showing, `--wav OUT.wav` records the audio,
-`--rtc-seed 1000000` fixes the console clock so two runs do the same thing. `--help` lists them all.
+`--rtc-seed 1000000` fixes the console clock so two runs behave the same. `--help` lists the rest.
 
-Without `--window` it runs headless and prints a report — which is often the faster way to find out
+Without `--window` it runs headless and prints a report, which is often the quicker way to find out
 what happened.
 
-## When it doesn't work
+## When it stops
 
-It will not work first time. The workflow for that is the part worth learning.
+It will not work first time. This part is the workflow worth learning.
 
-**It stops at an address.** The most common outcome: the game jumps somewhere the translator never
-found. Rather than reading the address off the screen, let the run write the fix:
+**It stops at an address.** The usual outcome: the game jumps somewhere discovery never reached.
+Let the run write the fix instead of reading addresses off the screen.
 
 ```sh
 build/games/mygame/mygame_boot --config games/mygame/mygame.toml --suggest-config next.toml
 ```
 
-`next.toml` holds the `[functions] extra` seeds for addresses discovery never reached and the
+`next.toml` holds `[functions] extra` seeds for the addresses it saw reached but untranslated, and
 `[[relocations]]` entries for code the program copied and ran elsewhere, skipping anything your
-config already has. Paste it in, rebuild, run again. Each seed usually finds more than the one
-function.
+config already covers. Paste it in, rebuild, run again.
 
-This is not a marginal convenience. Crazy Taxi's release build — the configuration with no
-interpreter in it — used to fault on frame 0. Ten entries found this way, over three rounds, and it
-now runs with zero untranslated call targets.
+Crazy Taxi's release build — the configuration with no interpreter in it — used to fault on frame
+0. Ten entries found this way over three rounds brought it to zero untranslated call targets.
 
-**It draws something wrong.** Press `F11`. You get five files — the picture, the display list that
-drew it, video memory and the graphics registers from that exact instant, and a note on where the
-run had got to. That bundle replays without the game:
+**It draws something wrong.** Press `F11`. You get five files: the picture, the display list that
+drew it, video memory, the graphics registers from that instant, and a note on where the run had
+got to. That bundle replays without the game:
 
 ```sh
 build/render/dream_render_view --vram capture-000.vram capture-000.ta
 ```
 
-This matters more than it sounds. A rendering bug you can replay offline is one you can bisect;
-a screenshot is one you can only argue about.
+A rendering bug you can replay offline is one you can bisect.
 
-**It behaves differently from the real thing.** The project's reference is Flycast's interpreter,
-run as an oracle and compared instruction by instruction against the translated code. See
-[docs/differential-harness.md](docs/differential-harness.md). This is how the translator's
-correctness is argued rather than asserted, and every emitter change is required to come with one.
+**It behaves differently from real hardware.** The reference is Flycast's interpreter, run as an
+oracle and compared instruction by instruction against the translated code. See
+[docs/differential-harness.md](docs/differential-harness.md). Every emitter change is expected to
+come with one.
 
 **Something drifts partway through a long run.** `--write-hash FILE` writes a rolling hash of every
-memory write, one line per frame. Two runs that agree line for line did the same thing; the first
-line that differs is the frame where they parted.
-
-## How it works, briefly
-
-| Layer | Approach | What that means |
-|---|---|---|
-| CPU | **Compiled** | Each guest function becomes a C++ function. Registers are local variables. No interpreter in a release build. |
-| Memory | Emulated | 16 MB RAM, 8 MB video memory in both of the hardware's two views, store queues. Address translation is a mask and an index. |
-| Graphics | Emulated (low level) | The real PowerVR2 display lists are decoded and drawn through Vulkan. The game talks to the hardware exactly as it did. |
-| Audio | Emulated (low level) | The game's own sound driver runs on an emulated ARM7, feeding an emulated mixer. |
-| BIOS and disc | **Replaced** (high level) | Console BIOS calls and the GD-ROM filesystem are answered by native code, not emulated firmware. No BIOS image needed. |
-
-So it is a hybrid: high-level where the console's own software would otherwise have to be emulated
-(and legally supplied), low-level everywhere the game touches hardware directly — because that is
-where games rely on exact behaviour.
-
-Deeper: [docs/emitter-design.md](docs/emitter-design.md) for how SH-4 becomes C++,
-[docs/runtime-render.md](docs/runtime-render.md), [docs/runtime-aica.md](docs/runtime-aica.md),
-[docs/runtime-memory.md](docs/runtime-memory.md) for the hardware side.
+memory write, one line per frame. The first line where two runs differ is the frame where they
+parted.
 
 ## Rules
 
-- **Never commit game data, BIOS images, flash, memory-card saves, or SDK files.** The `.gitignore`
+- Never commit game data, BIOS images, flash, memory-card saves, or SDK files. The `.gitignore`
   covers the usual cases; check `git status` anyway.
-- **Never paste Sega SDK source or headers into this repository**, including into comments.
-  Describe the interface in your own words, or point at the equivalent in
+- Never paste Sega SDK source or headers into this repository, including into comments. Describe
+  the interface in your own words, or point at the equivalent in
   [KallistiOS](https://github.com/KallistiOS/KallistiOS), which is BSD-licensed.
 - Windows CE titles are out of scope.
 - Emitted code must behave identically on x86-64 and ARM64; see ADR 16.
 
-## Where to read more
+## Further reading
 
 | Document | What it covers |
 |---|---|
@@ -263,8 +231,9 @@ Deeper: [docs/emitter-design.md](docs/emitter-design.md) for how SH-4 becomes C+
 | [docs/game-config.md](docs/game-config.md) | The TOML format, relocations, overlays, symbol files |
 | [docs/emitter-design.md](docs/emitter-design.md) | How SH-4 becomes C++: delay slots, FPU modes, interrupts, coverage |
 | [docs/differential-harness.md](docs/differential-harness.md) | Testing against Flycast as an oracle |
+| [docs/runtime-render.md](docs/runtime-render.md), [docs/runtime-aica.md](docs/runtime-aica.md), [docs/runtime-memory.md](docs/runtime-memory.md) | The emulated hardware |
 | [docs/decisions/](docs/decisions/) | Architecture decision records, with the reasoning |
-| [docs/progress.md](docs/progress.md) | Where every work package actually stands |
+| [docs/progress.md](docs/progress.md) | Where every work package stands |
 | [docs/implementation-plan.md](docs/implementation-plan.md) | The four phases and what remains |
 | [tools/dcdisc/README.md](tools/dcdisc/README.md) | Disc tooling in detail |
 
