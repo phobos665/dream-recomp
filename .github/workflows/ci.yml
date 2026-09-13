@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }} (dev interpreter ${{ matrix.devinterp }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  name: linux-x64,   devinterp: "OFF", renderer: "ON"  }
+          - { os: ubuntu-latest,  name: linux-x64,   devinterp: "ON",  renderer: "OFF" }
+          - { os: windows-latest, name: windows-x64, devinterp: "OFF", renderer: "OFF" }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: "3.12"
+
+      - name: Install disc tooling
+        run: python -m pip install --upgrade pip && python -m pip install -e "tools/dcdisc[test]"
+
+      # One Linux job compiles the Vulkan renderer (WP2.3). It never opens a window: the point is
+      # that the graphics code is compiled by GCC as well as clang, which is where the portable-C++
+      # mistakes show up. The shader compiler comes from the Vulkan SDK packages.
+      - name: Install graphics toolchain
+        if: matrix.renderer == 'ON' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev glslc libsdl3-dev || \
+            sudo apt-get install -y libvulkan-dev glslc
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DDREAM_DEV_INTERPRETER=${{ matrix.devinterp }}
+          -DDREAM_RENDERER=${{ matrix.renderer }}
+          -DPython3_EXECUTABLE="${{ steps.py.outputs.python-path }}"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  # macOS ARM64 is the primary development platform and is verified locally on every change. On a
+  # private repository its runner minutes cost 10x Linux, so it runs only on manual dispatch and on
+  # tags; make it unconditional if the repository goes public.
+  build-macos:
+    name: macos-arm64 (dev interpreter OFF)
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: "3.12"
+      - name: Install disc tooling
+        run: python -m pip install --upgrade pip && python -m pip install -e "tools/dcdisc[test]"
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DPython3_EXECUTABLE="${{ steps.py.outputs.python-path }}"
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  format:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check formatting
+        run: |
+          # Pinned via the PyPI wheel so local and CI use the identical binary; distro clang-format
+          # drifts between versions and reflows differently (see docs/dev-setup.md).
+          pipx install "clang-format==20.1.7"
+          git ls-files 'translator/*.cpp' 'translator/*.h' 'runtime/*.cpp' 'runtime/*.h' \
+            'render/*.cpp' 'render/*.h' 'audio/*.cpp' 'audio/*.h' \
+            | xargs clang-format --dry-run --Werror
+
+  toolchain-container:
+    name: toolchain container (KOS hello)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t dream-recomp/toolchain:ci tools/docker
+      - name: Build KOS test program
+        run: docker run --rm -v "$PWD:/work" -w /work dream-recomp/toolchain:ci bash -c "make -C tests/kos/hello && ls -la tests/kos/hello/hello.bin"
