@@ -1,0 +1,313 @@
+# Future enhancements
+
+What a recompilation can offer beyond running the game: rebindable input, runtime options, and
+modifications. This is a design study, not a plan. Nothing here is scheduled, and none of it should
+displace closing the emitter defect that WP3.2 is blocked on, because every feature below is worth
+less on a build that stops partway into a race.
+
+Written 2026-09-13 from a discovery pass over the repository and over the Flycast checkout in
+`build/flycast-src`, which is the ADR 1 reference implementation and already contains working
+versions of two of the three things studied here. Effort figures are engineer-days for the work when
+it is picked up.
+
+## Summary
+
+| Area | Size | Kind of work |
+| --- | --- | --- |
+| Input binding, keyboard and gamepad | 11 days | Engineering |
+| Runtime options: counters, frame pacing, internal resolution | 6 days | Engineering, and two defect fixes |
+| Texture replacement | 6 days | Engineering, with a reference to port |
+| Audio replacement | 4 days to find out, 5 to 10 to do | Conditional |
+| Model replacement | Open-ended | Research |
+| Adding characters or locations | Open-ended | A research programme |
+
+**Do input binding first.** It is the only one that removes a blocker rather than adding a feature.
+Crazy Taxi is a driving game with an analogue trigger and an analogue stick; on a keyboard the
+accelerator is fully down or fully up, so the baseline title cannot honestly be evaluated as a game.
+WP3.4's deliverable is an acceptance matrix of both maps at every time setting and every Crazy Box
+stage, which is fifty-odd rows of play-testing that only the owner can do. Every row is faster and
+more accurate with a pad. It also pays for the other two areas, because the overlay it needs is the
+same overlay the options panel and any mod-authoring tool need.
+
+## 1. Input binding
+
+### What already exists
+
+The seam is already drawn. `render/include/dream/render/vk/window.h` defines `enum class Control`
+with twelve entries and says why: SDL's key codes stop at the window, the launcher maps `Control`
+onto the Maple controller, and the runtime never learns what a keyboard is. `Live::read_controls`
+in the launcher is the only consumer, and `--press` already arbitrates against live input, with a
+scripted press winning while it is held.
+
+What is missing is everything else: no gamepad support at all, no representation of "a physical
+input" that can be stored or compared, no user configuration file anywhere in the project, and no
+way to draw text over the frame.
+
+### Where bindings should live
+
+Two files, split on a principle rather than convenience.
+
+**The game's TOML gets an `[input]` profile**: which Dreamcast controls this title actually uses, and
+what they mean. Crazy Taxi needs an analogue accelerator on the right trigger, a brake on the left
+and a steering axis; a title with digital controls needs none of that. That is per-title, it is
+reviewable, and it belongs with the other per-game settings.
+
+**A per-user file gets the actual bindings**, keyed by game and by gamepad identifier, under the
+platform's configuration directory. This is the part that must not be committed: the game TOML is a
+tracked file, so putting a player's keys in it would mean every rebind dirties the repository.
+
+With nothing in the user file, the defaults are today's keyboard table plus a gamepad mapping
+derived from SDL's own button names, so a first run with a pad plugged in works without visiting any
+UI.
+
+One wrinkle: `GameConfig` lives in the translator library, which ADR 1 asks to keep free of runtime
+dependencies so it could be relicensed. Player-facing settings do not belong in its data model. A
+separate runtime configuration loader should read the same file and own `[input]`, `[video]` and
+`[mods]`, leaving `GameConfig` to describe the binary. That decision deserves its own ADR, because
+it fixes the file layout every later option lands in.
+
+### How the UI gets drawn
+
+The renderer is bespoke Vulkan with no text, no widgets and no font. The options are Dear ImGui, a
+hand-rolled overlay, or an external launcher window.
+
+**Dear ImGui**, vendored at a pinned tag and built only inside the optional Vulkan library. It is
+what the reference implementation uses, so porting its binding behaviour is reading rather than
+inventing. It is licensed compatibly. A binding screen specifically needs modal "press an input"
+capture, a device list that changes under hot-plug, and scrolling, which are the three things a
+hand-rolled overlay is worst at. And the same integration pays for the options panel and any future
+debug panel, so it is amortised over three features.
+
+The honest counter-argument: if the owner wants only a frame-rate counter and never a menu, ImGui is
+heavy. That is why the counter is sequenced behind this decision rather than in front of it.
+
+### Analogue input, which is where this stops being trivial
+
+The Maple axes are single bytes centred on 0x80. Four things need to exist that do not:
+
+- **Triggers** scale from SDL's range directly. The keyboard stays all-or-nothing, which for a
+  driving game means full throttle or none. A ramp to full over about 150 ms while held is a cheap
+  and genuinely noticeable improvement, and should be an option rather than a silent behaviour.
+- **Sticks** need an explicit centre. A stick that rests at 0x7F instead of 0x80 makes the car drift
+  forever and reads as a physics bug, so the scaling deserves a unit test.
+- **A dead zone**, per axis, configurable, or a worn stick steers on its own.
+- **Conversion both ways.** The existing d-pad to stick synthesis must stay for keyboard players, and
+  a stick to d-pad synthesis is needed for menus in titles that only read the d-pad.
+
+**Hot-plug policy worth deciding explicitly:** unplugging the pad should release every button rather
+than freeze the last state, or a pad yanked mid-race leaves the accelerator held.
+
+### Keeping the scripted-input path working
+
+`--press` is what the headless tests and the audio bring-up depend on, so it must keep working with
+no window and no binding file. It writes the controller state directly and stays upstream of the
+binding layer. While refactoring, `--press` should learn to express axes, so a scripted regression
+run can drive a car; that costs an hour and unblocks automated gameplay tests.
+
+### Risks
+
+The Vulkan overlay integration is the only real technical risk and it is modest; the reference ships
+the same thing on macOS. Beyond that: scope creep into a general settings GUI, a rebind that makes
+the game unplayable with no way back (needs reset-to-defaults and a configuration file that is
+regenerated rather than fatal when it fails to parse), and a key held while the overlay is open
+reaching the game, which needs an explicit input-focus state.
+
+## 2. Runtime options
+
+### Two defects found while studying this
+
+These are worth fixing regardless of whether any options UI is built.
+
+**The pacer carries its deficit forever.** The comment says it never speeds up to catch up, because a
+frame that took too long is gone and pretending otherwise makes the audio stutter. But the target is
+absolute, so after a host stall the guest runs flat out until the debt is repaid, which is exactly
+the behaviour the comment disowns. The symptom is bursts of dropped audio after every hitch. The fix
+is to keep the absolute target, which is the right way to avoid drift, but clamp the deficit to
+about one frame.
+
+**Vsync is a second, invisible pacer.** The swapchain hard-codes the always-available present mode,
+which blocks until the display's next refresh inside the guest's vertical-blank callback. Against a
+60 Hz display this is benign. On a 50 Hz display, or a compositor throttling a background window,
+the guest is held *below* real time, the audio device drains, and nothing reports it, because the
+sink counts dropped blocks but not starvation. Present mode should be an option, and the sink needs
+a starvation counter so the two failure directions are distinguishable.
+
+The general rule, which belongs in the renderer notes: **there must be exactly one authority for real
+time.** Today it is the guest clock, with vsync as an uncontrolled second authority and the audio
+device as a third that copes by discarding. The reference implementation instead makes the audio
+device the authority and is glitch-free by construction, but that couples the run rate to a device
+that may not exist. Keeping the guest clock as the authority and making vsync subordinate to it is
+the smaller change.
+
+### What a frame-rate counter should measure
+
+Three rates are in play and they are genuinely different numbers here, so conflating them would hide
+the faults the counter exists to show.
+
+| Rate | Source | What it tells you |
+| --- | --- | --- |
+| Guest frames per second | the video timing generator | whether the game is running at the right speed |
+| Renders per second | Tile Accelerator renders | the game's own internal frame rate |
+| Presents per second | host swapchain | the display pipeline's health |
+
+On Crazy Taxi the first two differ by about half during the boot, so a single "FPS" number would be
+meaningless. Show all three, plus speed as a percentage of real time, plus the audio queue depth,
+which is the early warning that the others are about to go wrong. Measure over about half a second;
+an instantaneous rate is noise.
+
+### What can change mid-run
+
+More than expected. Pipelines are built with dynamic viewport and scissor state and the pipeline key
+carries no size, so changing internal resolution needs only the offscreen images and framebuffer
+rebuilt while the render pass stays alive. That sidesteps the question of pipelines referencing a
+destroyed render pass rather than reasoning about it. The cost is a device wait and a few megabytes
+reallocated, which is a hitch of a frame or two for a deliberate user action.
+
+Only the validation layers and the audio device are genuinely restart-only.
+
+### A caution about naming
+
+"Uncapped frame rate" is not available on this architecture and the renderer notes already say why:
+a title's simulation is tied to its own timing, so removing the cap gives the game in fast-forward,
+not more frames. Anything labelled "uncap" in a menu will be read as the sixty-to-unlimited uplift
+people know from other recompilations, and will disappoint. Call it speed. If a cap below the guest
+rate is ever wanted, implement it by skipping presents and never by slowing the guest clock, which
+would slow the sound hardware with it.
+
+Determinism must survive all of this: the write-hash comparison and the fixed clock seed depend on a
+reproducible run, so no option may touch the virtual clock.
+
+## 3. Modifications
+
+Three of the four requests here are not the same kind of work, so they are separated rather than
+listed together.
+
+### Texture replacement: tractable
+
+The texture cache decodes once, keyed on the two hardware words, and uploads plain RGBA, so
+substituting a replacement is mechanically "use this image instead". The decode is already separated
+from the upload.
+
+**The correction that matters: the cache key is not a usable identity for a replacement pack.** It
+contains the texture's video memory address, and a title that streams a city reloads the same art at
+different addresses. A pack keyed that way would work on the title screen and fall apart in the
+city. The identity must be a **content hash** over the raw video memory bytes, with the compression
+codebook hashed separately, exactly as the reference does. Raw rather than decoded, because it is
+cheaper, because it matches the reference so packs are interoperable in principle, and because
+decoded output would change if a decoder bug were ever fixed, silently invalidating every pack.
+Once a hash scheme ships, packs depend on it forever, so it should be versioned in the pack manifest
+from the first release.
+
+A **dump mode** comes first and is worth more than the replace path, because without it nobody can
+author a pack. Both want a PNG writer, which is a small header-only dependency the reference already
+uses.
+
+Limitations to document rather than discover: a replacement may be a higher resolution but its
+aspect ratio must match or the art distorts, and an indexed texture whose palette the game animates
+cannot be replaced by a flat image without losing the animation.
+
+The characteristic failure is a pack that looks right on the title screen and wrong in the city, so
+the acceptance test has to be in-game rather than on a capture. Memory is a real ceiling: a
+high-resolution pack is gigabytes, the cache has a fixed descriptor budget and no eviction policy,
+and the cache currently drops everything on a palette change, which with a large pack means
+re-uploading the world. An asynchronous preload path, which the reference has, is a real part of the
+effort rather than a refinement.
+
+### Audio replacement: conditional
+
+Crazy Taxi streams CRI ADX from a large archive on the disc. The runtime's disc layer is
+sector-level, with no file-level interface. Four seams exist, in increasing order of ambition:
+
+1. **Sector redirect.** Wrap the disc reader so a range of sectors comes from a host file instead.
+   The game's own decoder then plays your audio and nothing else changes. About 200 lines,
+   title-agnostic, testable, and it needs no understanding of the sound driver. The constraint is
+   real: the replacement must be the same size or smaller and padded, in a format the decoder
+   accepts.
+2. **Sound memory interception**, which works for short effects and is hopeless for a stream.
+3. **Sound-driver mailbox emulation**, which ADR 10 already records as a possible later enhancement
+   layer for music replacement. It would make track substitution trivial, and it is also, in that
+   ADR's own words, undocumented and driver-version specific. The traffic can now be observed, so
+   the research is possible, but it is research.
+4. **Final-mix substitution**, which is crude and gets the timing wrong.
+
+**Recommendation: the sector redirect first, with the mailbox recorded as the eventual right answer.**
+Before committing to it, one day of investigation settles whether the audio is decoded on the main
+processor or in the sound driver, because that decides how tight the format constraint is.
+
+The risk worth stating: a wrong-sized replacement desynchronises the archive index and the game reads
+garbage, which is silent and sounds like corruption. Streaming timing is also already named in the
+plan as a race-prone area, and changing the size of what is streamed perturbs it.
+
+### Model replacement: research
+
+Geometry never exists as a file. It arrives as a stream of parameters through the Tile Accelerator,
+and by the time the renderer sees a character the model has already been transformed to screen
+space: the coordinates are pixels and depth is a reciprocal. The library did the transform on the
+main processor and sent the results.
+
+Three consequences follow, and together they make this a different category of problem from
+textures. There is no stable identity for "the taxi's body", because the parameter stream differs
+every frame. Replacing it means hooking the submission function before the transform, recovering the
+model from guest memory in the game's own format, and substituting. And skinning and animation live
+in the game's code, so a replacement must match its skeleton.
+
+The project does have the hooking mechanism, and the symbol database names hundreds of library
+functions, so the hook is supported. What is missing is knowing which function, what its arguments
+mean, and what the model format is. **That is weeks to months per title, and the first weeks produce
+nothing visible.**
+
+Two things are worth doing instead, in this order. A **model dumper**, converting a captured frame's
+geometry to a standard mesh format, is about 2 days; the meshes are posed and projected and so
+useless for replacement, but they make every later investigation cheaper. And **per-model material
+override** is achievable on top of the texture work with no reverse engineering at all, since
+polygons can be identified by which texture they use; it covers a surprising share of what people
+actually want from a visual mod.
+
+### Adding characters or locations: a research programme
+
+This needs the model and animation formats, the level and collision format, the archive layout well
+enough to insert rather than replace, the table the game indexes characters through, the spawn data
+for a location, and the streaming schedule that decides what is resident. Each is a
+reverse-engineering project and they compose: a new character with no animation data crashes, and a
+new location the streaming code does not know about never loads.
+
+The recompilation does give one genuine advantage over an emulator: the game's code is C++ that can
+be hooked at named functions, so once the formats are understood, inserting is easier than it would
+be under emulation. But understanding the formats is the whole job, and the recompilation does not
+help with it. **This should not be estimated until texture replacement and a model dumper exist and
+have shown what the data looks like.**
+
+## How a modification pack is identified, stored and shipped
+
+One rule covering all of the above, because getting it wrong is a licensing problem rather than a
+bug.
+
+A pack is a directory or archive with a manifest naming the pack, its author, its licence, the game
+and disc it targets, and the hash-scheme version. Assets inside are named by content hash.
+
+**Packs live in gitignored directories and are never committed.** A texture pack derived from a
+retail game is a derivative of the publisher's art however much was repainted, and the project's
+hard rule against committing game data covers it absolutely. The ignore entries should be added at
+the same time as the loader, not afterwards.
+
+The game's TOML gets a `[mods]` section listing pack search paths and load order, which is per-title,
+reviewable, and contains no game data. The repository ships loaders, dumpers and the manifest
+schema. It never ships assets.
+
+On licensing: under GPL-2.0 anything linking the runtime is covered, but **data read by it is not**,
+so third-party packs can carry whatever licence their authors choose. Worth writing down once so it
+is not re-litigated per pack.
+
+## Sequence
+
+1. **Input binding**, because it converts the owner's remaining play-testing from a chore into
+   something they will actually do, and because it pays for the overlay the rest needs.
+2. **Runtime options**, because two of its findings are defects, and because the performance profile
+   of the open city is already a deliverable in the plan with no instrument to measure it.
+3. **Texture replacement**, because it is the enhancement that most visibly distinguishes a
+   recompilation from an emulator, and there is a reference to port.
+4. **Audio replacement** after its one day of investigation.
+5. **Model work**, labelled as research in the plan, after a dumper has shown what the data is.
+
+All of it after the emitter defect. A binding UI for a game that stops partway into a race is a
+binding UI nobody can use for long.

@@ -1,0 +1,19 @@
+# Metropolis Street Racer (USA), MK-51012. A third title, and a different shape from the first two:
+# the disc carries five code files, so 1ST_READ.BIN is a loader and the game proper lives elsewhere.
+# Only the boot binary is configured here; the point is a third coverage measurement, not a port.
+
+[game]
+id = "msr"
+title = "Metropolis Street Racer"
+region = "USA"
+product = "MK-51012"
+
+[disc]
+image = "../MSR - Metropolis Street Racer (USA) (Rev A).chd"
+sha1_1st_read = "f3696894ddc82202a3aef3ac2fec1d473f7be4ff"
+
+[binary]
+path = "extracted/fs/1ST_READ.BIN"
+load_address = 0x8C010000
+link_address = 0x0C010000
+entry = 0x8C010000

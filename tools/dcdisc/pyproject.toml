@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dcdisc"
+version = "0.1.0"
+description = "Dreamcast disc image tooling: GDI and CHD reading, ISO9660 extraction, IP.BIN, 1ST_READ.BIN descrambling, inspection"
+requires-python = ">=3.9"
+license = {text = "GPL-2.0-only"}
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7", "pycdlib>=1.14"]
+
+[project.scripts]
+dcdisc = "dcdisc.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dcdisc*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

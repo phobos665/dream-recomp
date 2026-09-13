@@ -1,0 +1,55 @@
+# Game data, BIOS, and SDK material are never committed (see docs/decisions ADR 1 and README).
+games/*/disc/
+games/*/dump/
+games/*/extracted/
+games/*/cache/
+*.gdi
+*.cdi
+*.chd
+!tools/dcdisc/tests/fixtures/*.chd
+*.iso
+*.bin
+*.BIN
+!tests/**/*.bin
+!tools/dcdisc/tests/fixtures/*
+*.fidb
+*.map
+*.MAP
+sdk/
+katana/
+dc_bios*
+dc_boot*
+dc_flash*
+*.vmu
+*.vms
+*.vmi
+
+# Build output
+build/
+build-*/
+out/
+cmake-build-*/
+.cache/
+compile_commands.json
+
+# Toolchain and editor
+.vscode/
+.idea/
+*.swp
+__pycache__/
+*.pyc
+.venv/
+
+# macOS and Python packaging clutter
+.DS_Store
+*.egg-info/
+
+# Owner-supplied third-party trees dropped into the checkout (never committed)
+/Dreamcast Katana SDK*/
+/flycast/
+
+# KOS test program build products
+tests/kos/**/*.elf
+tests/kos/**/*.o
+tests/kos/**/*.bin
+tests/sh4/cprogs/*.elf

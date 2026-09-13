@@ -1,0 +1,11 @@
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  modernize-use-nullptr,
+  modernize-use-override,
+  readability-braces-around-statements,
+  -bugprone-easily-swappable-parameters
+WarningsAsErrors: ''
+HeaderFilterRegex: '(translator|runtime)/.*'

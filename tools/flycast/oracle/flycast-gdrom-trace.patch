@@ -1,0 +1,38 @@
+diff --git a/core/reios/gdrom_hle.cpp b/core/reios/gdrom_hle.cpp
+index 25268893..d614e05a 100644
+--- a/core/reios/gdrom_hle.cpp
++++ b/core/reios/gdrom_hle.cpp
+@@ -664,7 +664,33 @@ static void GD_HLE_Command(gd_command cc)
+ 
+ #define r Sh4cntx.r
+ 
++// dream-recomp local patch: trace every GD-ROM syscall (DREAM_TRACE_GDROM=path) in the format
++// of dream-recomp's own BIOS HLE trace so the two can be diffed request by request.
++static void gdrom_hle_op_impl();
+ void gdrom_hle_op()
++{
++	static FILE* trace = [] {
++		const char* p = getenv("DREAM_TRACE_GDROM");
++		return p ? fopen(p, "w") : nullptr;
++	}();
++	const u32 fn = r[7], a4 = r[4], a5 = r[5], a6 = r[6];
++	gdrom_hle_op_impl();
++	if (!trace || a6 != SYSCALL_GDROM)
++		return;
++	fprintf(trace, "gdrom fn %2u r4 %08x r5 %08x -> r0 %08x  [status %d cmd %u remaining %u total %u req %u]",
++			fn, a4, a5, r[0], (int)gd_hle_state.status, (u32)gd_hle_state.command,
++			gd_hle_state.multi_read_count, gd_hle_state.multi_read_total, gd_hle_state.last_request_id);
++	if (fn == GDROM_GET_DRV_STAT && a4)
++		fprintf(trace, " drv %u type %u", ReadMem32_nommu(a4), ReadMem32_nommu(a4 + 4));
++	if (fn == GDROM_GET_CMD_STAT && a5)
++		fprintf(trace, " res %u %u %u %u", ReadMem32_nommu(a5), ReadMem32_nommu(a5 + 4), ReadMem32_nommu(a5 + 8), ReadMem32_nommu(a5 + 12));
++	if (fn == GDROM_REQ_CMD && a5)
++		fprintf(trace, " params %08x %08x %08x %08x", ReadMem32_nommu(a5), ReadMem32_nommu(a5 + 4), ReadMem32_nommu(a5 + 8), ReadMem32_nommu(a5 + 12));
++	fputc('\n', trace);
++	fflush(trace);
++}
++
++static void gdrom_hle_op_impl()
+ {
+ 	if (SYSCALL_GDROM == r[6])		// GDROM SYSCALL
+ 	{

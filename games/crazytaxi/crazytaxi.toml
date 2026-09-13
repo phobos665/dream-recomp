@@ -1,0 +1,91 @@
+# Crazy Taxi (USA), MK-51035. Per-game configuration for dream-translate (docs/game-config.md).
+# Every value here was measured from the owner's disc; see checklist-report.md for how.
+
+[game]
+id = "crazytaxi"
+title = "Crazy Taxi"
+region = "USA"
+product = "MK-51035"
+
+[disc]
+image = "../crazytaxi.chd"           # the owner's dump, gitignored; mounted by the launcher
+# SHA-1 of the plain 1ST_READ.BIN this config was measured against (GD-ROM dumps store it plain).
+sha1_1st_read = "8b5bd2a2380799e4e1de46cf801c352fd90c2f3e"
+
+[binary]
+path = "extracted/fs/1ST_READ.BIN"   # written by `dcdisc extract`, gitignored
+load_address = 0x8C010000            # where the BIOS loads the file
+link_address = 0x0C010000            # what the literal pools assume (P0 alias of the same RAM)
+entry = 0x8C010000
+
+# The first 0x100 bytes are a loader that copies the Katana startup stub to 0x8C004000 and jumps
+# there; the stub sets FPSCR 0x00040001, fills the system variables at 0x8C00F400 and enters the
+# program. The translator emits the copy as its own unit viewed at the destination address.
+[[relocations]]
+source = 0x0C010100
+size = 0x3F00
+dest = 0x8C004000
+entries = [0x8C004000, 0x8C004070]   # the loader enters at +0 and again at +0x70 (measured by the launcher)
+
+# The interrupt entry at VBR+0x600 (0x8C00FA00) and the RTE stub after it hold two different
+# pieces of code over the game's life: the startup stub installs a small pair (patched literals)
+# that hands the first task to the main program, then Katana's runtime installs its own (taken on
+# every interrupt: 556 VBlanks in 300 frames). All three are overlays: the runtime dispatches to
+# whichever translation matches the bytes currently in RAM. The exception stub at VBR+0
+# (0x8C00F400) is installed once.
+[[relocations]]
+source = 0x0C010D40
+size = 0x20
+dest = 0x8C00FA00
+entries = [0x8C00FA00]
+no_fold = true
+overlay = true
+
+[[relocations]]
+source = 0x0C010D20
+size = 0x10
+dest = 0x8C00FA20
+entries = [0x8C00FA20]
+no_fold = true
+overlay = true
+
+[[relocations]]
+source = 0x0C16BBB8
+size = 0x58
+dest = 0x8C00FA00
+entries = [0x8C00FA00, 0x8C00FA20]
+no_fold = true
+overlay = true
+
+[[relocations]]
+source = 0x0C16BC14
+size = 0x34
+dest = 0x8C00F400
+entries = [0x8C00F400]
+
+[functions]
+symbols = "symbols.tsv"   # names from the Ghidra FID pass (dream-translate symbols)
+pointers = true
+sweep = true
+# Entries discovery does not reach, each found by a run and named by --suggest-config. The first
+# is the nop-padded main entry; the rest are inside the display-list builder, whose callers reach
+# them by a path the static passes do not follow.
+extra = [0x0C020000, 0x0C161046, 0x0C161050, 0x0C161118, 0x0C16112A]
+# 0x0C020000 is the nop-padded main entry, which no static pass reaches and which the program
+# jumps to rather than calls. The 0x0C161xxx four are on the memory-card path and translate
+# correctly; without them a release build faults at frame 27.
+#
+# NOT here, deliberately: 0x0C081476, 0x0C081494, 0x0C0814DE, 0x0C081E56, 0x0C081E76. A run
+# reports them as untranslated call targets and they look like the same kind of entry, but they
+# are jumps into a region discovery leaves as a hole (0x0c081476..0x0c081560, between fn_0c081200
+# and fn_0c081560). Naming them does get that code translated, and the translation is wrong: 152
+# texture decode failures against none, and 138 frames drawn against 330, measured both ways on
+# 2026-09-13. Until that emitter defect is found the region is left to the development
+# interpreter, which renders it correctly -- so this title needs a development build.
+# exclude = []            # false positives that break the build or emit nonsense
+
+[hle]
+# guest address = "runtime handler"; filled in Phase 2/3 (GD-ROM, ADX, VMU library entry points)
+
+[hooks]
+# guest address = "hook name"; Phase 3

@@ -1,0 +1,595 @@
+[
+  {
+    "name": "p1_sum_n0",
+    "image": "p1_sum.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "0"
+    }
+  },
+  {
+    "name": "p1_sum_n1",
+    "image": "p1_sum.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "1"
+    }
+  },
+  {
+    "name": "p1_sum_n5",
+    "image": "p1_sum.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "5"
+    }
+  },
+  {
+    "name": "p1_sum_n1000",
+    "image": "p1_sum.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "1000"
+    }
+  },
+  {
+    "name": "p2_alu",
+    "image": "p2_alu.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000"
+  },
+  {
+    "name": "p3_mem",
+    "image": "p3_mem.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "0x8c100000"
+    },
+    "hash": "0x8c100000:64"
+  },
+  {
+    "name": "p4_calls_n0",
+    "image": "p4_calls.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "0"
+    }
+  },
+  {
+    "name": "p4_calls_n7",
+    "image": "p4_calls.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "7"
+    }
+  },
+  {
+    "name": "p5_fpu",
+    "image": "p5_fpu.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "0x8c100000"
+    },
+    "hash": "0x8c100000:64"
+  },
+  {
+    "name": "p6_switch_0",
+    "image": "p6_switch.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "0"
+    }
+  },
+  {
+    "name": "p6_switch_1",
+    "image": "p6_switch.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "1"
+    }
+  },
+  {
+    "name": "p6_switch_2",
+    "image": "p6_switch.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "2"
+    }
+  },
+  {
+    "name": "p6_switch_3",
+    "image": "p6_switch.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "3"
+    }
+  },
+  {
+    "name": "p6_switch_7",
+    "image": "p6_switch.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "7"
+    }
+  },
+  {
+    "name": "p7_fpuedge",
+    "image": "p7_fpuedge.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "0x8c100000"
+    },
+    "hash": "0x8c100000:32"
+  },
+  {
+    "name": "c1_div_mod_pos",
+    "program": "div_mod",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "100",
+      "r5": "7"
+    }
+  },
+  {
+    "name": "c1_div_mod_neg",
+    "program": "div_mod",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0xffffff9c",
+      "r5": "7"
+    }
+  },
+  {
+    "name": "c1_div_mod_by_zero",
+    "program": "div_mod",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "7",
+      "r5": "0"
+    }
+  },
+  {
+    "name": "c1_div_mod_overflow",
+    "program": "div_mod",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0x80000000",
+      "r5": "0xffffffff"
+    }
+  },
+  {
+    "name": "c1_udiv_mix",
+    "program": "udiv_mix",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010028",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0xffffffff",
+      "r5": "3"
+    }
+  },
+  {
+    "name": "c1_udiv_mix_zero",
+    "program": "udiv_mix",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010028",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "12345",
+      "r5": "0"
+    }
+  },
+  {
+    "name": "c1_dense_switch_0",
+    "program": "dense_switch",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010080",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0",
+      "r5": "0x12345"
+    }
+  },
+  {
+    "name": "c1_dense_switch_1",
+    "program": "dense_switch",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010080",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "1",
+      "r5": "0x12345"
+    }
+  },
+  {
+    "name": "c1_dense_switch_2",
+    "program": "dense_switch",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010080",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "2",
+      "r5": "0x12345"
+    }
+  },
+  {
+    "name": "c1_dense_switch_3",
+    "program": "dense_switch",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010080",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "3",
+      "r5": "0x12345"
+    }
+  },
+  {
+    "name": "c1_dense_switch_4",
+    "program": "dense_switch",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010080",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "4",
+      "r5": "0x12345"
+    }
+  },
+  {
+    "name": "c1_dense_switch_5",
+    "program": "dense_switch",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010080",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "5",
+      "r5": "0x12345"
+    }
+  },
+  {
+    "name": "c1_dense_switch_6",
+    "program": "dense_switch",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010080",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "6",
+      "r5": "0x12345"
+    }
+  },
+  {
+    "name": "c1_dense_switch_7",
+    "program": "dense_switch",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010080",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "7",
+      "r5": "0x12345"
+    }
+  },
+  {
+    "name": "c1_dense_switch_8",
+    "program": "dense_switch",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010080",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "8",
+      "r5": "0x12345"
+    }
+  },
+  {
+    "name": "c1_dense_switch_9",
+    "program": "dense_switch",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010080",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "9",
+      "r5": "0x12345"
+    }
+  },
+  {
+    "name": "c1_dense_switch_10",
+    "program": "dense_switch",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010080",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "10",
+      "r5": "0x12345"
+    }
+  },
+  {
+    "name": "c1_mul64",
+    "program": "mul64",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c0100e8",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0xdeadbeef",
+      "r5": "0x12345678"
+    }
+  },
+  {
+    "name": "c1_sub64",
+    "program": "sub64",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010100",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0x89abcdef",
+      "r5": "0x01234567",
+      "r6": "0xfffffff0",
+      "r7": "0x7fffffff"
+    }
+  },
+  {
+    "name": "c1_pack_bytes",
+    "program": "pack_bytes",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010134",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0x8c100000",
+      "r5": "40"
+    }
+  },
+  {
+    "name": "c1_vec_transform",
+    "program": "vec_transform",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010180",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0x8c100800",
+      "r5": "0x8c100000",
+      "r6": "3"
+    }
+  },
+  {
+    "name": "c1_sort_words",
+    "program": "sort_words",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c0101d8",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0x8c100000",
+      "r5": "25"
+    }
+  },
+  {
+    "name": "c1_dot3",
+    "program": "dot3",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010224",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0x8c100000",
+      "r5": "0x8c100100"
+    }
+  },
+  {
+    "name": "c1_clamp_scale_hi",
+    "program": "clamp_scale",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010248",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "5"
+    },
+    "fregs": {
+      "fr4": "3.7f",
+      "fr5": "-1.0f",
+      "fr6": "2.0f"
+    }
+  },
+  {
+    "name": "c1_clamp_scale_lo",
+    "program": "clamp_scale",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010248",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0xfffffffd"
+    },
+    "fregs": {
+      "fr4": "-9.5f",
+      "fr5": "-1.0f",
+      "fr6": "2.0f"
+    }
+  },
+  {
+    "name": "c1_float_to_fixed",
+    "program": "float_to_fixed",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010270",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "fregs": {
+      "fr4": "1.5f"
+    }
+  },
+  {
+    "name": "c1_float_to_fixed_neg",
+    "program": "float_to_fixed",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010270",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "fregs": {
+      "fr4": "-123.456f"
+    }
+  },
+  {
+    "name": "c1_float_to_fixed_sat",
+    "program": "float_to_fixed",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010270",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "fregs": {
+      "fr4": "70000.0f"
+    }
+  },
+  {
+    "name": "c1_fib_10",
+    "program": "fib",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010280",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "10"
+    }
+  },
+  {
+    "name": "c1_fib_15",
+    "program": "fib",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010280",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "15"
+    }
+  },
+  {
+    "name": "c1_str_len",
+    "program": "str_len",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c01052c",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0x8c100000"
+    }
+  },
+  {
+    "name": "c1_mem_copy",
+    "program": "mem_copy",
+    "image": "../cprogs/c1_idioms.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010554",
+    "fill": "0x8c100000:4096:0x777",
+    "hash": "0x8c100000:4096",
+    "regs": {
+      "r4": "0x8c100800",
+      "r5": "0x8c100000",
+      "r6": "100"
+    }
+  },
+  {
+    "name": "p8_split",
+    "image": "p8_split.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "0x00001234"
+    }
+  },
+  {
+    "name": "p9_rte",
+    "image": "p9_rte.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000"
+  },
+  {
+    "name": "p10_longjmp",
+    "image": "p10_longjmp.bin",
+    "base": "0x8c030000",
+    "entry": "0x8c030000"
+  },
+  {
+    "name": "p11_condfall",
+    "image": "p11_condfall.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000",
+    "regs": {
+      "r4": "3"
+    }
+  },
+  {
+    "name": "p12_selfcmp",
+    "image": "p12_selfcmp.bin",
+    "base": "0x8c010000",
+    "entry": "0x8c010000"
+  }
+]

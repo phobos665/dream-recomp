@@ -1,0 +1,16 @@
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: 100
+AccessModifierOffset: -4
+DerivePointerAlignment: false
+PointerAlignment: Left
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"dream/'
+    Priority: 2
+  - Regex: '^<.*\.h>'
+    Priority: 3
+  - Regex: '^<'
+    Priority: 1
