@@ -1,6 +1,11 @@
 # Translate the test programs at build time and run them (docs/emitter-design.md).
 include(${CMAKE_CURRENT_SOURCE_DIR}/programs/programs.cmake)
-include(${CMAKE_SOURCE_DIR}/games/crazytaxi/slice.cmake)  # adds game functions when the image is present
+# Optional: adds Crazy Taxi functions to the harness when the owner-supplied image is present.
+# Absent in a checkout without that title, so the include is guarded rather than required.
+set(_ct_slice ${CMAKE_SOURCE_DIR}/games/crazytaxi/slice.cmake)
+if(EXISTS ${_ct_slice})
+  include(${_ct_slice})
+endif()
 
 set(_gen_dir ${CMAKE_CURRENT_BINARY_DIR}/gen)
 file(MAKE_DIRECTORY ${_gen_dir})

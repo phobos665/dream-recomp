@@ -3,7 +3,6 @@ games/*/disc/
 games/*/dump/
 games/*/extracted/
 games/*/cache/
-games/
 *.gdi
 *.cdi
 *.chd
