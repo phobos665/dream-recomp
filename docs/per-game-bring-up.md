@@ -26,6 +26,48 @@ cmake -S . -B build && cmake --build build --parallel
 the translator missed, which is what lets a half-configured title run at all; a release build stops
 at the first thing it cannot translate. You will make a release build at the end, as the exit exam.
 
+## The stages, and what each one asks of you
+
+The steps below are the mechanics. This is the shape of the whole job, so you know which stage you
+are in and what finishing it looks like. The tooling gets you to the *question* quickly at every
+stage; answering it is yours.
+
+| Stage | Done when | What it asks of you | Reach for |
+| --- | --- | --- | --- |
+| **1. It builds** | `<id>_boot` links | Nothing. This is mechanical. | `dcdisc new-game`, `doctor` |
+| **2. It boots** | the program's own code runs | Work out where the title copies code and runs it, and write the relocations. First real analysis. | `--suggest-config`, `disasm` |
+| **3. It draws** | a display list reaches the renderer | Close enough of the startup path that the title stops asking for functions nobody translated. | `--stop-on-ta`, `--suggest-config` |
+| **4. It reaches its title screen** | you can see it | Mostly more of stage 3, plus the first faults that are wrong translations rather than missing ones. | `DREAM_STOP_ON_UNMAPPED`, `--interpret` |
+| **5. It plays** | you can start a game and finish one | Gameplay is different code from the front end. Expect a second wave of everything. | `--press`, `DREAM_INTERP_FUNCS` |
+| **6. It runs in release** | no interpreter, no faults | Every gap the development build was absorbing becomes a hard stop. This is the exam, not a formality. | `-DDREAM_DEV_INTERPRETER=OFF`, `--write-hash` |
+| **7. It is right** | it plays like the console | Play it. Nothing here can be automated and nobody else can do it for you. | your hands, a real console or a reference emulator |
+
+**Where the effort actually goes.** Stages 1 and 3 are quick. Stage 2 is a day or two of reading
+disassembly. Stages 4 and 5 are the bulk, and they are bulk because each fault is a decision, not a
+command. Stage 6 is short if the earlier stages were honest and long if they were not -- a
+development build hides an enormous amount. Stage 7 is open-ended and is the only one that tells you
+whether any of it worked.
+
+Nobody has yet taken a title through all seven with the tool in its current state. Crazy Taxi is the
+furthest along and is at stage 5, with a release build that runs its attract mode and faults in play.
+So treat any day figure you are given, including one from this repository, as a guess.
+
+**The three judgements the tooling cannot make for you**, which is most of what the work is:
+
+- **Is this address a missing translation or a wrong one?** Missing gets a seed; wrong gets
+  quarantined and reported. Step 4 and Step 6 are both about telling them apart, and Step 4's
+  warning exists because they look identical in a run report.
+- **Does this difference matter?** A changed write hash is a fact. Whether it is a bug you
+  introduced, a bug you revealed, or a difference nobody would notice is a judgement, and the honest
+  default is to assume it matters until you understand it.
+- **Is it playing correctly?** A run that completes without faulting can still be wrong. Only
+  playing it tells you, and that is why stage 7 exists as a stage rather than a checkbox.
+
+**What you can lean on completely**: the write hash for whether behaviour changed, the interpreter
+for whether the emitter is at fault, `DREAM_INTERP_FUNCS` for which function, and the disassembler
+for what the code actually is. Those four answer nearly every question you will have, and every
+defect found in this repository during the Crazy Taxi bring-up was found with them.
+
 ## Step 1: make the project
 
 ```
