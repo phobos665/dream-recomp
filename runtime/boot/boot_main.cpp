@@ -1057,6 +1057,9 @@ void usage(const char* argv0, std::FILE* out) {
         "  --window               open a window and play; implies sound\n"
         "  --scale N              draw at N times the guest's 640x480 (1 to 4, default 1)\n"
         "  --fps                  start with the on-screen frame-rate counter showing\n"
+        "  --present-mode M       vsync (default), mailbox or immediate. The default paces the\n"
+        "                         whole run to the panel, so --unthrottled with a window measures\n"
+        "                         the refresh rate rather than the emulator.\n"
         "  --bindings FILE        controller bindings; the default is one file per user, shared\n"
         "                         by every title. F1 (or a pad's select button) opens the screen\n"
         "                         that edits them, and writes them back here.\n"
@@ -1135,6 +1138,11 @@ int main(int argc, char** argv) {
     // --screenshot-presented: capture what reached the screen rather than the game's own
     // pixels. For looking at the display path -- overlays, letterboxing, the resolve.
     bool shot_presented = false;
+#ifdef DREAM_WITH_RENDERER
+    // --present-mode: vsync paces the run to the panel, which is right for playing and wrong for
+    // measuring. Nothing about the guest changes either way.
+    auto present_mode = dream::render::vk::Window::PresentMode::Fifo;
+#endif
     // --bindings FILE: where the controller layout is read from and written back to. Unset means
     // the host's per-user settings directory, so one layout follows the player across every title.
     std::string bindings_file;
@@ -1218,7 +1226,20 @@ int main(int argc, char** argv) {
             no_create_vmu = true;
         else if (!std::strcmp(argv[i], "--screenshot-presented"))
             shot_presented = true;
-        else if (!std::strcmp(argv[i], "--bindings") && i + 1 < argc) {
+        else if (!std::strcmp(argv[i], "--present-mode") && i + 1 < argc) {
+            const char* m = argv[++i];
+            using PM = dream::render::vk::Window::PresentMode;
+            if (!std::strcmp(m, "mailbox"))
+                present_mode = PM::Mailbox;
+            else if (!std::strcmp(m, "immediate"))
+                present_mode = PM::Immediate;
+            else if (!std::strcmp(m, "vsync") || !std::strcmp(m, "fifo"))
+                present_mode = PM::Fifo;
+            else {
+                std::fprintf(stderr, "unknown present mode %s: vsync, mailbox or immediate\n", m);
+                return 2;
+            }
+        } else if (!std::strcmp(argv[i], "--bindings") && i + 1 < argc) {
             bindings_file = argv[++i];
             bindings_file_set = true;
         } else if (!std::strcmp(argv[i], "--vmu") && i + 1 < argc)
@@ -1541,6 +1562,7 @@ int main(int argc, char** argv) {
         live->writeback = writeback;
         live->show_fps = start_with_fps;
         live->shot_presented = shot_presented;
+        live->window.set_present_mode(present_mode);
         live->screenshot_at = screenshot_at;
         live->capture_at = capture_at;
         // The window names the title being run. The config is the only place that name is written

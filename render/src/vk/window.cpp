@@ -111,6 +111,29 @@ bool Window::create(const char* title, int width, int height, bool want_validati
     return create_swapchain();
 }
 
+// FIFO is the only mode the specification requires a surface to support, so everything else is
+// asked for and accepted only if the surface offers it. Silently falling back is deliberate: this
+// is reached from a measurement flag, and a benchmark option that can refuse to open a window is
+// worse than one that quietly measures the default.
+VkPresentModeKHR Window::choose_present_mode() const {
+    if (wanted_present_ == PresentMode::Fifo)
+        return VK_PRESENT_MODE_FIFO_KHR;
+    const VkPresentModeKHR want = wanted_present_ == PresentMode::Mailbox
+                                      ? VK_PRESENT_MODE_MAILBOX_KHR
+                                      : VK_PRESENT_MODE_IMMEDIATE_KHR;
+    std::uint32_t count = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(ctx_.physical_device(), surface_, &count, nullptr);
+    std::vector<VkPresentModeKHR> modes(count);
+    if (count)
+        vkGetPhysicalDeviceSurfacePresentModesKHR(ctx_.physical_device(), surface_, &count,
+                                                  modes.data());
+    for (VkPresentModeKHR m : modes)
+        if (m == want)
+            return want;
+    std::fprintf(stderr, "present mode not available on this surface; using vsync\n");
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+
 bool Window::create_swapchain() {
     VkSurfaceCapabilitiesKHR caps{};
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ctx_.physical_device(), surface_, &caps);
@@ -156,7 +179,7 @@ bool Window::create_swapchain() {
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     sci.preTransform = caps.currentTransform;
     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    sci.presentMode = VK_PRESENT_MODE_FIFO_KHR;  // always supported; vsync
+    sci.presentMode = choose_present_mode();
     sci.clipped = VK_TRUE;
     if (vkCreateSwapchainKHR(ctx_.device(), &sci, nullptr, &swapchain_) != VK_SUCCESS) {
         error_ = "vkCreateSwapchainKHR failed";

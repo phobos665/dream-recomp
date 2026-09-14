@@ -56,6 +56,15 @@ public:
     Window(const Window&) = delete;
     Window& operator=(const Window&) = delete;
 
+    // How finished frames reach the display. FIFO is vsync and is the only mode Vulkan guarantees
+    // exists, so it is the default and the fallback. The others matter for measurement: under FIFO
+    // the swapchain paces the whole run to the panel, so an unthrottled windowed benchmark reports
+    // the refresh rate rather than what the emulator can do.
+    enum class PresentMode { Fifo, Mailbox, Immediate };
+    // Call before create(). A mode the surface does not offer falls back to FIFO rather than
+    // failing: a benchmark flag should not be able to stop the window opening.
+    void set_present_mode(PresentMode m) noexcept { wanted_present_ = m; }
+
     // Opens the window and creates the context, surface and swapchain. False on failure with
     // error() set; a machine with no display is an ordinary failure, not an exception.
     bool create(const char* title, int width, int height, bool want_validation);
@@ -169,9 +178,11 @@ private:
     std::vector<SDL_Gamepad*> pads_;
     std::vector<std::string> devices_;
     void refresh_devices();
+    VkPresentModeKHR choose_present_mode() const;
 
     bool capturing_ = false, captured_ = false, capture_cancelled_ = false;
     bool escape_quits_ = true;
+    PresentMode wanted_present_ = PresentMode::Fifo;
     Binding capture_{};
 };
 
