@@ -61,7 +61,7 @@ fault: untranslated call target 0x8c126a20 from pc 0x0c168da0
 | --- | --- | --- |
 | `0x8C…` or `0x8c00…` -- RAM, not the disc image | the title copied code somewhere and ran it | Step 3 |
 | `0x0C…` -- inside the image | discovery did not reach it | Step 4 |
-| `cannot resume at …` | a non-local return, see Step 6 | Step 6 |
+| `cannot resume at …` | a non-local return to an address with no emitted block | Step 4, then Step 6 |
 
 ## Step 3: relocations, the first real barrier
 
@@ -144,6 +144,25 @@ Then confirm with the disassembler, because the boundary alone can mislead:
 A hole begins cleanly after an `rts` and its delay slot. A mid-function address lands in the middle
 of a computation.
 
+**That test is necessary and not sufficient, and this is the part that will catch you out.** There
+is a third case that looks exactly like a hole under both checks and is neither: an address that
+begins cleanly after an `rts`, that no *emitted* block covers, but that a translated function's
+declared **range** still spans. `find_containing` therefore succeeds, the resume fails anyway, and
+seeding it does something subtler than truncation -- it moves that code from the interpreter, which
+was running it, into translated code, which may not agree.
+
+Crazy Taxi has one at `0x0C081E56`. Seeding it takes the release build from frame 408 to frame 1206
+and does *not* truncate its enclosing function -- the boundaries are unchanged, textures still decode
+with none failed, and the tests pass. The only signal that anything moved is the gameplay write
+hash, which changes. Translated and interpreted disagree about what that function does, so the
+address is a candidate **emitter defect**, not a missing seed, and it belongs in Step 6 rather than
+here.
+
+**So treat every seed as a behaviour change until the write hash says otherwise.** Set up the gate
+in Step 7 before you start adding entries here, not after. A seed that gets the title further through
+a run while quietly altering what it computes is worse than the fault it replaced, because the fault
+was at least visible.
+
 ## Step 5: symbols, which are optional and worth it
 
 `symbols = "symbols.tsv"` names the functions in reports and disassembly. Names come from a Ghidra
@@ -200,7 +219,10 @@ fixed.
 
 ## Step 7: the regression gate
 
-Before changing anything else, get a gate that tells you whether you broke the emulation. Every
+**Read this before Step 4 and have it working before you seed anything.** It is numbered here
+because it is where it fits the narrative, not where it fits the work.
+
+Get a gate that tells you whether you broke the emulation. Every
 guest write is hashed, per frame, so an identical hash means the run did bit-for-bit the same thing.
 
 ```
@@ -272,8 +294,13 @@ Crazy Taxi, 2026-09-14, from a stub config to a working release build:
 4. Four addresses at `0x0C161xxx` were reached by non-local returns rather than calls, which
    `resume_at` cannot enter unless they are block starts. Seeded, since they translate correctly.
 5. The release build then ran attract mode, with a write hash identical to the development build.
-   Gameplay still faults at `0x0c081e56` -- a non-local return to a non-block-start, which is a tool
-   limitation rather than anything this title can fix in its config.
+   Gameplay still faults at `0x0c081e56`, a non-local return to an address no emitted block covers.
+   It disassembles like a hole and seeding it gets three times further into the run -- and changes
+   the gameplay write hash, with the enclosing function intact and every other signal clean. So it
+   is left alone, and the region goes to the oracle as a suspected emitter defect.
 
-Point 5 is the honest ending. Some of what you hit will not be yours to fix, and the useful thing to
-do with it is report it against the tool with the address, the disassembly and the reproduction.
+Point 5 is the honest ending, and the shape of it is worth taking seriously: four of the five steps
+were config work this title could do for itself, and the fifth was a translation bug that no config
+can fix. Expect that ratio. When you reach one, report it against the tool with the address, the
+disassembly, the write-hash difference and the reproduction -- that is a far more useful bug report
+than "my game stops here", and it is the only way the tool improves for the title after yours.
