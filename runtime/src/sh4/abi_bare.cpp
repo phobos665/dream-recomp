@@ -260,6 +260,29 @@ void call_indirect(Ctx& c, ::dream::Memory& m, std::uint32_t target) {
         fn(c, m);
         return;
     }
+    // A call or jump through a register that lands *inside* an already-translated function. That
+    // is an ordinary thing for SH-4 code to do and it is not a missing translation: the block is
+    // compiled, it simply is not a function entry and so has no row of its own in the table. The
+    // function's resume entry can start at any of its block starts, which is the same door a
+    // non-local return comes through.
+    //
+    // Without this, the only way to reach such a block was to name it in the game's TOML as an
+    // extra discovery seed -- which gives it top rank, makes the enclosing function's branch to it
+    // "foreign" (translator/src/analysis/discover.cpp), and truncates that function. Crazy Taxi's
+    // display-list builder was split that way and produced corrupt texture control words: 152
+    // texture decode failures against none. Reaching the block is the runtime's job, not the
+    // config's.
+    const std::uint32_t phys = target & 0x1FFFFFFFu;
+    if (!interpreted(phys)) {
+        if (const FunctionEntry* e = find_containing(target, &m); e && e->resume) {
+            c.pc = target;
+            // resume() dispatches on its own block starts and calls resume_miss for anything else,
+            // so a target that is inside the range but not a block start still faults honestly
+            // rather than running from the wrong place.
+            e->resume(c, m, target);
+            return;
+        }
+    }
     if (g_hooks) {
         g_hooks->on_untranslated(c, m, target);
         return;
