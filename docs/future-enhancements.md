@@ -16,9 +16,10 @@ it is picked up.
 | --- | --- | --- |
 | Input binding, keyboard and gamepad | **done 2026-09-14** | Engineering |
 | Widescreen, true Hor+ | 11 days (7-21) | Engineering, with a defect to fix first |
-| Frame generation to 120/144 | see `rendering-enhancements-study.md` | Engineering, research-flavoured |
+| Fix the supersample resolve | **1 day** | A defect, and the best visual return on this list |
+| Anti-aliasing after that | 5 days (3-10) | Engineering |
+| Frame generation to 120/144 | 35 days (17-75) | Half engineering, half research |
 | Delta-time conversion of the title | 1 day to size it, then unknown | Research |
-| Anti-aliasing | see `rendering-enhancements-study.md` | Engineering |
 | VMU screen on the display | 2.5 days (2-3.5) | Engineering |
 | Runtime options: counters, frame pacing, internal resolution | 6 days | Engineering, and two defect fixes |
 | Texture replacement | 6 days | Engineering, with a reference to port |
@@ -315,6 +316,47 @@ invent detail where moving objects uncover what was behind them, which shows as 
 `runtime/boot/boot_main.cpp`). Per game it is one address block -- where the camera lives -- in the
 TOML. Keeping the HUD from ghosting needs the same 2D/3D separation widescreen needs, so that work
 is shared between the two features and should be sequenced once, not twice.
+
+### What the study concluded
+
+**Frame generation: 35 days central, 17 to 75.** Of that, 13/21/31 is real engineering and
+7/16/45 is research -- disocclusion fill and moving objects are the open problems, and they are the
+reason the high end is so wide. Minimum honest slice is 13 days.
+
+Two findings sharpen the approach. **Geometry interpolation and TAA are unavailable rather than
+merely expensive**: `Polygon` and `Vertex` carry no identity (`render/include/dream/render/display_list.h:36-56`)
+and the previous frame is discarded outright (`runtime/boot/boot_main.cpp:159`), so there is nothing
+to correspond across frames and no way to produce motion vectors. But the camera *is* recoverable:
+`Ctx::xf[16]` is XMTRX (`runtime/include/dream/runtime/sh4/ctx.h:37`) and the title transforms every
+vertex through it -- `ftrv xmtrx,fv4` at `0x0C080F1C`, 150 of them in the image -- so a guest hook
+gets us the camera matrix per frame.
+
+So: **depth-aware camera reprojection, run as forward extrapolation rather than interpolation**,
+with the 2D layer excluded and re-composited unwarped. Extrapolation because interpolation means
+holding a frame back, and 16.7 ms of added lag in a driving game is a worse trade than the edge
+shimmer extrapolation costs. One prerequisite: depth is currently thrown away
+(`render/src/vk/offscreen.cpp:28-32,46` -- no SAMPLED or TRANSFER_SRC usage, `storeOp DONT_CARE`),
+so it has to be kept before anything can warp by it. The log-depth encoding inverts in closed form.
+
+## 2d. Anti-aliasing, and a defect worth fixing first
+
+**Do not build MSAA.** It conflicts structurally with the per-pixel OIT direction the project has
+accepted -- Flycast's OIT path is a three-subpass input-attachment A-buffer with no multisampling
+anywhere in its Vulkan backend -- and between the `gl_FragDepth` write and the `discard`-based
+punch-through list there is little left for it to do.
+
+**There is a one-day fix that is probably the largest visual improvement available anywhere on this
+list.** `--scale` already supersamples: at scale 4 the geometry is drawn at 2560x1920. The presenter
+then throws that away with a **nearest-neighbour** resolve. `smooth` is declared false at
+`render/include/dream/render/vk/present.h:53`, selects `VK_FILTER_NEAREST` over `LINEAR` at
+`render/src/vk/present.cpp:74`, and **is never assigned anywhere in the tree** -- verified by grep,
+2026-09-14. There is no mip chain either. So every user running `--scale 2` or `--scale 4` today is
+paying the full rendering cost of supersampling and receiving a point-sampled image for it.
+
+Fix the resolve first -- a box downsample in `present.frag` -- and measure before deciding whether
+anything further is wanted. Proper SSAA may simply be enough. If it is not, SMAA 1x in the same
+fullscreen pass, with FXAA as the cheap first cut. Five days central for the lot, three to ten, of
+which the first day is the resolve.
 
 ### The other route: give the game a delta time
 
