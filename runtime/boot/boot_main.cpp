@@ -363,6 +363,14 @@ struct Live {
     // never take away the way back out. Called once per poll, running or paused.
     void pump_menu() {
         using dream::render::vk::Control;
+        // Escape does two things a keystroke apart: leave the screen, then end the run. The key has
+        // to be let go before it means the second one. Without this, closing the screen with escape
+        // re-arms quit under a finger that is still down, and one key repeat ends the run -- which
+        // from the outside is indistinguishable from a crash.
+        if (rearm_escape && !window.held(Control::Back)) {
+            rearm_escape = false;
+            window.set_escape_quits(true);
+        }
         if (window.pressed(Control::Menu)) {
             if (menu.is_open())
                 close_menu();
@@ -414,6 +422,7 @@ struct Live {
     void open_menu() {
         menu.open(window.bindings());
         bindings_dirty = false;
+        rearm_escape = false;
         // While the screen is up, escape backs out of it rather than ending the run.
         window.set_escape_quits(false);
     }
@@ -421,7 +430,7 @@ struct Live {
     void close_menu() {
         menu.close();
         window.cancel_capture();
-        window.set_escape_quits(true);
+        rearm_escape = true;  // not until escape is released; see pump_menu()
         if (!bindings_dirty)
             return;
         bindings_dirty = false;
@@ -619,6 +628,8 @@ struct Live {
     // usable, or SDL could not name a settings directory on this host.
     std::string bindings_path;
     bool bindings_dirty = false;  // changed since the screen was opened
+    // Escape closes the screen and also quits: quit stays disarmed until the key comes back up.
+    bool rearm_escape = false;
     // --screenshot-at N / --capture-at N: the same thing F12 and F11 do, at the Nth presented
     // frame, for a run with nobody at the keyboard. These were environment variables, which is
     // fine for a one-off and wrong for something the documentation tells people to use.
