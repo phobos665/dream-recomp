@@ -1,6 +1,7 @@
 #include "dream/runtime/maple/maple.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -18,6 +19,17 @@ void Payload::str(const char* s, std::size_t field) {
 }
 
 // ---- Controller --------------------------------------------------------------------------------
+
+std::uint8_t axis_byte(float low, float high) noexcept {
+    const float v = std::clamp(high - low, -1.0f, 1.0f);
+    // 127.5 rather than 127, so -1 lands exactly on 0 and +1 on 255 while 0 still rounds to the
+    // 0x80 the hardware calls centred.
+    return static_cast<std::uint8_t>(std::lround(v * 127.5f + 127.5f));
+}
+
+std::uint8_t trigger_byte(float v) noexcept {
+    return static_cast<std::uint8_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
+}
 
 CardStatus MemoryCard::load(const std::string& path) {
     path_.clear();  // adopted only once the file is known to be a card

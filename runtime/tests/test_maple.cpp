@@ -117,3 +117,32 @@ TEST_CASE("maple: the VBlank hardware trigger runs the list once per frame") {
     r.sys.sched.advance(r.sys.spg.frame_cycles() * 2);
     CHECK(r.bus.transfers == before + 3);
 }
+
+// An analogue reading as the controller's byte. The centre value is the one that matters: a title
+// reads 0x80 as "not steering", and a conversion that lands a resting stick one off it makes every
+// car drift.
+TEST_CASE("an axis converts to the byte the hardware calls centred") {
+    using dream::maple::axis_byte;
+    CHECK(axis_byte(0.0f, 0.0f) == 0x80);  // nothing held
+    CHECK(axis_byte(1.0f, 1.0f) == 0x80);  // both halves: they cancel rather than fight
+    // Two digital sources still give the extremes the keyboard always produced.
+    CHECK(axis_byte(1.0f, 0.0f) == 0x00);
+    CHECK(axis_byte(0.0f, 1.0f) == 0xFF);
+    // A real stick's travel survives. Half travel is 191.25 and 63.75 rather than a round number
+    // either side: centre is 127.5 on a byte that has no such value, so one side of it is a count
+    // shorter. That is what the byte can express, not a rounding fault.
+    CHECK(axis_byte(0.0f, 0.5f) == 191);
+    CHECK(axis_byte(0.5f, 0.0f) == 64);
+    // Out of range is clamped, not wrapped: a wrapped axis is full lock the wrong way.
+    CHECK(axis_byte(0.0f, 9.0f) == 0xFF);
+    CHECK(axis_byte(9.0f, 0.0f) == 0x00);
+}
+
+TEST_CASE("a trigger keeps its travel") {
+    using dream::maple::trigger_byte;
+    CHECK(trigger_byte(0.0f) == 0x00);
+    CHECK(trigger_byte(1.0f) == 0xFF);
+    CHECK(trigger_byte(0.5f) == 128);
+    CHECK(trigger_byte(-1.0f) == 0x00);
+    CHECK(trigger_byte(2.0f) == 0xFF);
+}

@@ -24,7 +24,11 @@ namespace dream::render::vk {
 //   arrow keys   d-pad          Z X A S   the A, B, X and Y buttons
 //   return       start          Q W       the left and right analogue triggers
 //   F12          screenshot     F11       capture everything about this frame
-//   escape       quit
+//   F1           the binding screen
+//   escape       quit, or back while the binding screen is up
+//
+// These are the launcher's own keys and are deliberately not bindable. Menu and Back in particular
+// are the way out of a layout that no longer works, so they cannot be rebound away.
 enum class Control : unsigned {
     Up,
     Down,
@@ -40,6 +44,8 @@ enum class Control : unsigned {
     Screenshot,
     Capture,
     ToggleFps,
+    Menu,
+    Back,
     Count
 };
 
@@ -69,6 +75,11 @@ public:
     bool held(Control c) const noexcept;
     // Went down since the previous poll(): for controls that act once rather than hold.
     bool pressed(Control c) const noexcept;
+
+    // Escape closes the window by default. The binding screen turns that off while it is up, so
+    // that backing out of a capture is not also the end of the run; Control::Back still reports
+    // the press either way.
+    void set_escape_quits(bool yes) noexcept { escape_quits_ = yes; }
 
     // --- the guest pad, through the player's bindings ------------------------------------------
     //
@@ -160,7 +171,14 @@ private:
     void refresh_devices();
 
     bool capturing_ = false, captured_ = false, capture_cancelled_ = false;
+    bool escape_quits_ = true;
     Binding capture_{};
 };
+
+// Where a player's bindings are kept when nothing else is asked for: the host's own per-user
+// settings directory, so one layout follows them across every title rather than being written
+// beside whichever game happened to be running. Empty when SDL cannot name such a place, which the
+// caller should treat as "do not persist" rather than as a failure.
+std::string default_bindings_path();
 
 }  // namespace dream::render::vk

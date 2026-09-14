@@ -75,6 +75,15 @@ public:
                          Payload& out) = 0;
 };
 
+// A host input's travel, 0 to 1 per direction, as the controller's own byte. The pair is one axis:
+// `low` and `high` are the two halves a player binds separately, so a keyboard binding two keys and
+// a pad binding two halves of one stick arrive here the same way. 0x80 is centre, and two digital
+// sources still give the 0x00 and 0xFF extremes a keyboard has always produced.
+std::uint8_t axis_byte(float low, float high) noexcept;
+// A trigger's travel as its byte: 0 released, 0xFF fully down, and everything between preserved,
+// which is the difference a real pad makes to a driving game.
+std::uint8_t trigger_byte(float v) noexcept;
+
 // The standard controller. Buttons are active-low (1 = released) in Katana's order:
 // C B A Start Up Down Left Right Z Y X D Up2 Down2 Left2 Right2 (bits 0..15).
 struct ControllerState {

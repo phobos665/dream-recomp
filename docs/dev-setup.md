@@ -22,12 +22,21 @@ build/dream-dev/games/crazytaxi/crazytaxi_boot \
 ```
 
 Use the development build for now: the release build stops at the first untranslated call target by
-design, and discovery is not closed (WP3.2). Arrow keys are the d-pad, `Z` `X` `A` `S` are A, B, X
-and Y, return is start, `Q` and `W` are the analogue triggers, `F10` toggles the frame-rate counter,
-`F12` writes a screenshot and escape quits. `--scale 2` or `--scale 4` draws at a higher internal
+design, and discovery is not closed (WP3.2). Out of the box, arrow keys are the d-pad, `Z` `X` `A`
+`S` are A, B, X and Y, return is start and `Q` and `W` are the analogue triggers -- all of them
+rebindable from `F1`, which opens the binding screen (a pad's select button does the same). `F10`
+toggles the frame-rate counter, `F12` writes a screenshot and escape quits. `--scale 2` or `--scale 4` draws at a higher internal
 resolution; `--unthrottled` removes the real-time pacing; `--wav OUT.wav` records the audio; `--fps`
 starts with the counter already showing. `--help` lists every flag. Never commit a VMU image: it is
 owner data.
+
+The binding screen stops the guest while it is up, so nothing can be rebound mid-corner. Arrow keys
+or the pad's d-pad move, return or south confirms, escape or east goes back, and a row waiting for
+an input takes the next thing pressed. Keyboard and pad are edited separately and both stay live in
+play. Changes take effect immediately and are written out when the screen closes, to one file per
+user shared by every title; `--bindings FILE` puts them somewhere else instead. A file that is
+damaged or half-written falls back to the defaults for whatever it did not set, so a bad file cannot
+leave a title unplayable.
 
 The counter reads `59.9 FPS  0.99X`: frames presented per second of wall clock, and guest time per
 second of wall clock, where 1.00x is the console's own pace. Both are averaged over half a second,

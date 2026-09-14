@@ -16,9 +16,24 @@ constexpr std::uint32_t kFramesInFlight = 2;
 // The keyboard layout, in Control order. Scancodes rather than key codes, so the physical key is
 // the same wherever the layout puts the letter on it.
 constexpr SDL_Scancode kScancodes[static_cast<unsigned>(Control::Count)] = {
-    SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT,  SDL_SCANCODE_Z,
-    SDL_SCANCODE_X,  SDL_SCANCODE_A,    SDL_SCANCODE_S,    SDL_SCANCODE_RETURN, SDL_SCANCODE_Q,
-    SDL_SCANCODE_W,  SDL_SCANCODE_F12,  SDL_SCANCODE_F11,  SDL_SCANCODE_F10,
+    SDL_SCANCODE_UP,     SDL_SCANCODE_DOWN, SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT,
+    SDL_SCANCODE_Z,      SDL_SCANCODE_X,    SDL_SCANCODE_A,    SDL_SCANCODE_S,
+    SDL_SCANCODE_RETURN, SDL_SCANCODE_Q,    SDL_SCANCODE_W,    SDL_SCANCODE_F12,
+    SDL_SCANCODE_F11,    SDL_SCANCODE_F10,  SDL_SCANCODE_F1,   SDL_SCANCODE_ESCAPE,
+};
+
+// The same controls on a pad, so somebody rebinding a pad does not have to reach for the keyboard
+// to do it. Fixed like the keys above and for the same reason: these are the way out of a layout
+// that no longer works. Back (select) opens the screen, south confirms, east goes back -- SDL's
+// positional names, so the physical button is the same whatever the face labels say. INVALID means
+// the control is keyboard-only: a screenshot is not something to hit by accident mid-race.
+constexpr SDL_GamepadButton kNavButtons[static_cast<unsigned>(Control::Count)] = {
+    SDL_GAMEPAD_BUTTON_DPAD_UP,    SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_LEFT,
+    SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_SOUTH,     SDL_GAMEPAD_BUTTON_EAST,
+    SDL_GAMEPAD_BUTTON_INVALID,    SDL_GAMEPAD_BUTTON_INVALID,   SDL_GAMEPAD_BUTTON_START,
+    SDL_GAMEPAD_BUTTON_INVALID,    SDL_GAMEPAD_BUTTON_INVALID,   SDL_GAMEPAD_BUTTON_INVALID,
+    SDL_GAMEPAD_BUTTON_INVALID,    SDL_GAMEPAD_BUTTON_INVALID,   SDL_GAMEPAD_BUTTON_BACK,
+    SDL_GAMEPAD_BUTTON_EAST,
 };
 }  // namespace
 
@@ -366,7 +381,7 @@ bool Window::poll() {
                     } else {
                         capture_cancelled_ = true;
                     }
-                } else if (ev.key.key == SDLK_ESCAPE) {
+                } else if (ev.key.key == SDLK_ESCAPE && escape_quits_) {
                     running_ = false;
                 }
                 break;
@@ -406,7 +421,11 @@ bool Window::poll() {
     const bool* keys = SDL_GetKeyboardState(nullptr);
     for (unsigned i = 0; i < static_cast<unsigned>(Control::Count); ++i) {
         const bool was = held_[i];
-        const bool now = keys && keys[kScancodes[i]];
+        bool now = keys && keys[kScancodes[i]];
+        if (kNavButtons[i] != SDL_GAMEPAD_BUTTON_INVALID)
+            for (SDL_Gamepad* g : pads_)
+                if (g && SDL_GetGamepadButton(g, kNavButtons[i]))
+                    now = true;
         held_[i] = now;
         pressed_[i] = now && !was;
     }
@@ -647,6 +666,18 @@ void Window::destroy() {
         // and the sink's destructor then runs against a torn-down subsystem and crashes the exit.
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
     }
+}
+
+// SDL knows where each host keeps per-user settings, which is the only reason this lives in the
+// SDL layer rather than beside the binding model: the model stays free of SDL so it can be tested
+// on a runner with no window.
+std::string default_bindings_path() {
+    char* dir = SDL_GetPrefPath("dream-recomp", "dream-recomp");
+    if (!dir)
+        return {};
+    std::string path = std::string(dir) + "bindings.txt";
+    SDL_free(dir);
+    return path;
 }
 
 }  // namespace dream::render::vk
