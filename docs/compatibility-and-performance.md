@@ -112,8 +112,55 @@ Two investigations opened 2026-09-14, both measuring rather than arguing:
 - `cpu-performance-study.md` -- the memory fast path, the windowed-versus-headless gap, AICA, and
   the poll path.
 
-Their findings and estimates land here when they are done. The candidates going in, in the order the
-profile ranks them:
+Both reported on 2026-09-14. **Together they are worth about 3x on CPU and about 90 MB, for roughly
+twelve engineer-days, and none of it touches a floating-point operation** -- so ADR 16's cross-ISA
+golden traces are unaffected by the lot.
+
+### What they found
+
+| Item | Gain | Days | Status |
+| --- | --- | --- | --- |
+| Inline the mask-and-index RAM fast path into emitted code | **1.68x** | 4 | measured on a prototype |
+| Cache `find_function` for indirect calls | **1.71x** | 2 | measured on a prototype |
+| Pool the texture cache's device allocations | **~90 MB** | 4 | measured |
+| `--present-mode` switch | frees the windowed ceiling | 1 | measured |
+| Drop libchdr's eager hunk map | 6.3 MB | 3 | measured |
+| Free the `1ST_READ.BIN` copy kept for the report | 2.1 MB | 1 | measured |
+
+The first two were built as throwaway prototypes and measured A/B rather than estimated: **3.5x to
+10.0x real time**, attract mode, headless, with the run report byte-identical both times. Projected
+real-time cost falls from ~43% of a core to ~15%, which is below Flycast's ~31%.
+
+**A correction to the baseline above.** "The window costs about half the throughput" was wrong. The
+swapchain uses `VK_PRESENT_MODE_FIFO_KHR` (`render/src/vk/window.cpp:159`), so a window locks
+presentation to the panel -- 120 Hz here -- and `--unthrottled` never reaches it: 1209 frames at
+120 Hz is 10.07 s against 10.11 s measured. The process is **asleep**, not working. Windowed costs
+about +15% CPU, not half the throughput. The 1.9x figure was the panel rate, not overhead.
+
+**Two findings that were in no document.** The guest makes **5.9 million indirect calls per guest
+second**, one every 34 guest cycles, and each was doing a `std::lower_bound` over a 3,794-entry,
+152 KB table (`runtime/src/sh4/abi_bare.cpp:109`). And the texture cache takes one
+`vkAllocateMemory` per entry (`render/src/vk/texture_cache.cpp:171`): 38 allocations of exactly
+2048 KB, 76 MB resident, for **0.82 MB of actual pixels** across 34 distinct textures, the largest
+64 KB. Metal's allocation granularity rounds each one up, so the amplification is about a hundredfold
+and is invariant under `--scale`, which is why scale never moved the memory figure.
+
+The unbounded texture cache is real -- it never evicts -- but with 48 entries it costs nothing today.
+The allocation strategy is the whole story; eviction is a latent defect to fix on its own merits.
+
+**Where the floor is.** About 62 MB windowed and 33 MB headless is irreducible, of which 28.1 MB is
+the guest's own hardware: 16 MB RAM, 8 MB VRAM as one allocation with two views, 2 MB sound RAM,
+2 MB BIOS, 128 KB flash. All zero-filled at startup, so all resident immediately. Eight days takes
+scale 1 from ~177 MB to ~79 MB, against Flycast's 727 MB.
+
+**AICA is next, and it resists.** About 30% of the post-fix profile, of which the DSP is a measured
+11%. But the ARM7 core and the 44.1 kHz tick are load-bearing: removing either makes the emulator
+**slower**, because the guest spins waiting on its own sound driver to respond. That is a result
+worth keeping, because it is the opposite of what the profile alone suggests.
+
+Also measured and rejected: compiling emitted code at `-O1` is worth 2%.
+
+### The candidates, in the order the profile ranks them
 
 1. **Inline the memory fast path into emitted code.** The largest single item, ADR-accepted in
    principle (mask-and-index, no mmap mirroring in v1), deferred since Phase 2 pending exactly the
