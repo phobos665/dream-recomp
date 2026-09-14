@@ -3,6 +3,9 @@ games/*/disc/
 games/*/dump/
 games/*/extracted/
 games/*/cache/
+# `--suggest-config` and `dcdisc new-game` write this next to the real config; it is a run's
+# output, not something anyone edits, and committing it invites editing the wrong file.
+games/*/suggested.toml
 *.gdi
 *.cdi
 *.chd
