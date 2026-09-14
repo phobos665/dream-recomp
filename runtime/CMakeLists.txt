@@ -26,7 +26,7 @@ add_library(dream_runtime STATIC
 )
 target_include_directories(dream_runtime PUBLIC include)
 # libchdr (BSD-3, third_party) for CHD disc images; the static target avoids a runtime DLL search.
-target_include_directories(dream_runtime SYSTEM PUBLIC ${CMAKE_SOURCE_DIR}/third_party/libchdr/include)
+target_include_directories(dream_runtime SYSTEM PUBLIC ${DREAM_ROOT}/third_party/libchdr/include)
 target_link_libraries(dream_runtime PUBLIC chdr-static)
 dream_target_defaults(dream_runtime)
 add_library(dream::runtime ALIAS dream_runtime)

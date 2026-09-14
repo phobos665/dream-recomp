@@ -1,6 +1,9 @@
 #include "dream/runtime/maple/maple.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 
 namespace dream::maple {
@@ -17,24 +20,99 @@ void Payload::str(const char* s, std::size_t field) {
 
 // ---- Controller --------------------------------------------------------------------------------
 
-bool MemoryCard::load(const std::string& path) {
-    path_ = path;
+std::uint8_t axis_byte(float low, float high) noexcept {
+    const float v = std::clamp(high - low, -1.0f, 1.0f);
+    // 127.5 rather than 127, so -1 lands exactly on 0 and +1 on 255 while 0 still rounds to the
+    // 0x80 the hardware calls centred.
+    return static_cast<std::uint8_t>(std::lround(v * 127.5f + 127.5f));
+}
+
+std::uint8_t trigger_byte(float v) noexcept {
+    return static_cast<std::uint8_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
+}
+
+CardStatus MemoryCard::load(const std::string& path) {
+    path_.clear();  // adopted only once the file is known to be a card
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec))
+        return CardStatus::Missing;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec)
+        return CardStatus::Unreadable;
+    // Exact size or nothing. A card with a stray newline is not a card, and writing it back would
+    // silently drop the byte; a file that is not a card at all must never be adopted, because the
+    // next block write would rewrite it end to end.
+    if (size != kImageSize)
+        return CardStatus::WrongSize;
     std::ifstream in(path, std::ios::binary);
     if (!in)
-        return true;  // no file yet: an unformatted card, which is what a blank one looks like
+        return CardStatus::Unreadable;
     in.read(reinterpret_cast<char*>(flash_.data()), static_cast<std::streamsize>(kImageSize));
-    return in.gcount() > 0;
+    if (in.gcount() != static_cast<std::streamsize>(kImageSize))
+        return CardStatus::Unreadable;
+    path_ = path;
+    return CardStatus::Ok;
 }
 
 bool MemoryCard::save() const {
     if (path_.empty())
-        return true;
+        return false;
     std::ofstream out(path_, std::ios::binary);
     if (!out)
         return false;
     out.write(reinterpret_cast<const char*>(flash_.data()),
               static_cast<std::streamsize>(kImageSize));
     return static_cast<bool>(out);
+}
+
+bool MemoryCard::save_as(const std::string& path) {
+    path_ = path;
+    return save();
+}
+
+// docs/vmu-creation-study.md has the provenance of every value here: each was read out of two real
+// cards rather than recalled, and a blank card built from this description differs from Flycast's
+// own default image only in leftover junk that image carries.
+void MemoryCard::format() {
+    std::fill(flash_.begin(), flash_.end(), std::uint8_t{0});
+    std::uint8_t* root = flash_.data() + 255 * kBlockSize;
+    auto put16 = [](std::uint8_t* p, std::uint16_t v) {
+        p[0] = static_cast<std::uint8_t>(v & 0xFF);
+        p[1] = static_cast<std::uint8_t>(v >> 8);
+    };
+    for (unsigned i = 0; i < 16; ++i) root[i] = 0x55;  // the format marker formatted() looks for
+    root[0x10] = 0x01;                                 // a custom volume colour follows
+    root[0x11] = 0xFF;                                 // blue
+    root[0x12] = 0xFF;                                 // green
+    root[0x13] = 0xFF;                                 // red
+    root[0x14] = 0x64;                                 // alpha, 100
+    // A fixed BCD stamp rather than the host clock, and deliberately: two runs of the same build
+    // must produce the same bytes, which is what the write-hash comparison in
+    // docs/differential-harness.md depends on. It is also the date both reference cards carry.
+    static constexpr std::uint8_t kStamp[8] = {0x19, 0x98, 0x11, 0x27, 0x00, 0x00, 0x59, 0x04};
+    std::copy(std::begin(kStamp), std::end(kStamp), root + 0x30);
+    // The geometry, which is also the 24 bytes Get Media Info hands back, so it is what makes the
+    // card describe itself consistently.
+    put16(root + 0x40, 255);  // last block
+    put16(root + 0x42, 0);    // partition number
+    put16(root + 0x44, 255);  // system area
+    put16(root + 0x46, 254);  // FAT
+    put16(root + 0x48, 1);    // one FAT block
+    put16(root + 0x4A, 253);  // directory, growing downwards
+    put16(root + 0x4C, 13);   // thirteen blocks of it
+    root[0x4E] = 5;           // volume icon; a real format writes 5, a card-less reply claims 0
+    put16(root + 0x50, 200);  // save area: VMU mini-games live at 200..230
+    put16(root + 0x52, 31);
+    root[0x56] = 0x80;  // both reference cards carry this; Flycast's own comment does not know why
+
+    std::uint8_t* fat = flash_.data() + 254 * kBlockSize;
+    for (unsigned b = 0; b <= 240; ++b) put16(fat + b * 2, 0xFFFC);  // free
+    put16(fat + 241 * 2, 0xFFFA);                                    // directory's last block
+    for (unsigned b = 242; b <= 253; ++b)
+        put16(fat + b * 2, static_cast<std::uint16_t>(b - 1));  // 253 -> 252 -> ... -> 241
+    put16(fat + 254 * 2, 0xFFFA);                               // the FAT block itself
+    put16(fat + 255 * 2, 0xFFFA);                               // and the root
+    // The directory (241..253) and the user area (0..199) stay zero: an empty card.
 }
 
 // A formatted card has its system area in the last block, starting with a run of 0x55.

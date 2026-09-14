@@ -2,7 +2,7 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/programs/programs.cmake)
 # Optional: adds Crazy Taxi functions to the harness when the owner-supplied image is present.
 # Absent in a checkout without that title, so the include is guarded rather than required.
-set(_ct_slice ${CMAKE_SOURCE_DIR}/games/crazytaxi/slice.cmake)
+set(_ct_slice ${DREAM_ROOT}/games/crazytaxi/slice.cmake)
 if(EXISTS ${_ct_slice})
   include(${_ct_slice})
 endif()
@@ -62,13 +62,13 @@ endforeach()
 string(APPEND _umbrella_content "\nnamespace dream::gen {\nstruct Program {\n    const char* name;\n    void (*entry)(dream::sh4::Ctx&, dream::Memory&);\n};\ninline constexpr Program kPrograms[] = {\n${_program_table}};\n}  // namespace dream::gen\n")
 file(WRITE ${_umbrella} "${_umbrella_content}")
 
-add_executable(dream_emit_tests test_programs.cpp test_golden.cpp ${CMAKE_SOURCE_DIR}/runtime/tests/test_main.cpp ${_gen_sources})
+add_executable(dream_emit_tests test_programs.cpp test_golden.cpp ${DREAM_ROOT}/runtime/tests/test_main.cpp ${_gen_sources})
 target_include_directories(dream_emit_tests PRIVATE ${_gen_dir})
 target_compile_definitions(dream_emit_tests PRIVATE
   DREAM_SH4_PROGRAMS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/programs"
   DREAM_SH4_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
-  DREAM_REPO_DIR="${CMAKE_SOURCE_DIR}")
-target_include_directories(dream_emit_tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/doctest)
+  DREAM_REPO_DIR="${DREAM_ROOT}")
+target_include_directories(dream_emit_tests SYSTEM PRIVATE ${DREAM_ROOT}/third_party/doctest)
 target_link_libraries(dream_emit_tests PRIVATE dream::runtime)
 dream_target_defaults(dream_emit_tests)
 # Generated code is checked with the project's warning set; -Wconversion noise on the casts the
@@ -86,7 +86,7 @@ dream_target_defaults(dream_sh4_runner)
 if(DREAM_FLYCAST_CORE)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME translator.differential
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/oracle/differential.py
+    COMMAND ${Python3_EXECUTABLE} ${DREAM_ROOT}/tools/oracle/differential.py
             --runner $<TARGET_FILE:dream_sh4_runner> --lib ${DREAM_FLYCAST_CORE}
             --programs ${CMAKE_CURRENT_SOURCE_DIR}/programs)
 endif()

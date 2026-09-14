@@ -348,11 +348,23 @@ replace what was decoded from those bytes before. The count it reports is also t
 exposed the problem above: about six textures a frame were being dropped at addresses inside the
 buffer being written.
 
-**Input.** The window maps a keyboard onto the Maple controller: arrow keys for the d-pad, `Z` `X`
-`A` `S` for A, B, X and Y, return for start, `Q` and `W` for the analogue triggers, `F12` for a
-screenshot and escape to quit. The d-pad also drives the analogue stick, because a title that
-steers with the stick and ignores the d-pad is otherwise unplayable from a keyboard. `--press`
-still works alongside it, and a scripted press wins while it is held.
+**Input.** The window maps a keyboard and any connected pad onto the Maple controller through the
+player's own bindings (`render/input.h`), both live at once. The defaults are the layout the
+launcher always had: arrow keys for the d-pad, `Z` `X` `A` `S` for A, B, X and Y, return for start,
+`Q` and `W` for the analogue triggers. The d-pad also drives the analogue stick, because a title
+that steers with the stick and ignores the d-pad is otherwise unplayable from a keyboard; that is a
+real binding now rather than something hidden in the launcher, so it can be changed. A pad's stick
+and triggers reach the guest as values rather than as flags, past a dead zone, and a digital trigger
+ramps to full over about 150 ms so a keyboard accelerator is not only ever fully down or fully up.
+
+The launcher's own keys are separate and deliberately not bindable (`Control` in `vk/window.h`):
+`F1` or a pad's select button opens the binding screen, `F12` screenshots, `F11` captures, `F10`
+toggles the counter, escape quits -- or backs out, while the screen is up. Keeping them apart is
+what stops a layout somebody has broken from also being a layout they cannot escape. The screen
+itself (`render/input_menu.h`) is drawn over the frame and stops the guest while it is open, so a
+control cannot be captured and played at the same time; the paused time is given back to the pacing
+below, or the run would sprint to catch up on closing. `--press` still works alongside all of it,
+and a scripted press wins while it is held.
 
 **Pacing.** The guest clock is the reference: the vertical-blank handler sleeps while the host is
 ahead of it and never speeds anything up to catch up, because a frame that took too long is gone

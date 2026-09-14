@@ -1,0 +1,29 @@
+# Nothing from a disc, a console or an SDK is ever committed. The config and the symbol table are
+# the only products of this work that belong in version control.
+game/disc/
+game/extracted/
+game/dump/
+game/cache/
+*.chd
+*.gdi
+*.cdi
+*.iso
+*.bin
+*.BIN
+*.vmu
+*.vms
+*.vmi
+dc_bios*
+dc_boot*
+dc_flash*
+sdk/
+katana/
+*.fidb
+
+# Build output
+build/
+build-*/
+.cache/
+compile_commands.json
+
+.DS_Store

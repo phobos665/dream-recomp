@@ -48,8 +48,11 @@ public:
     // when nothing has been uploaded yet, which leaves the cleared background showing.
     bool draw(VkCommandBuffer cmd, VkExtent2D target);
 
-    // Nearest-neighbour rather than linear filtering: the guest's pixels shown as pixels. An
-    // upscaling mode will want the choice, so it is a field rather than a constant.
+    // The sampler's own filter, which now only decides how a *magnified* image is stretched: the
+    // guest's pixels shown as pixels, or blurred between them. Minification no longer goes through
+    // it at all -- draw() measures how many source pixels each drawn pixel covers and the fragment
+    // shader averages them, so --scale finally produces the anti-aliasing it was already paying
+    // for.
     bool smooth = false;
 
     const std::string& error() const noexcept { return error_; }

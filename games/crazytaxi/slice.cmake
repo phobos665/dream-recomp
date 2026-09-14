@@ -2,7 +2,7 @@
 # functions picked from the emitted code (no calls, no memory writes). Included by
 # tests/sh4/CMakeLists.txt only when the owner-supplied image exists; nothing here is
 # committed from the disc.
-set(_ct_image ${CMAKE_SOURCE_DIR}/games/crazytaxi/extracted/fs/1ST_READ.BIN)
+set(_ct_image ${DREAM_ROOT}/games/crazytaxi/extracted/fs/1ST_READ.BIN)
 if(EXISTS ${_ct_image})
   list(APPEND DREAM_SH4_PROGRAMS
     "ct_077320|${_ct_image}|0x0c010000|0x0c077320:0x0c07735c:ct_077320"

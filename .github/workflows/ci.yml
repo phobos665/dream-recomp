@@ -10,6 +10,10 @@ jobs:
   build:
     name: ${{ matrix.name }} (dev interpreter ${{ matrix.devinterp }})
     runs-on: ${{ matrix.os }}
+    # Without this GitHub allows 360 minutes, and a job that hangs -- a test waiting on input, a
+    # build waiting on a lock -- spends every one of them against the account before anyone looks.
+    # These are roughly four times the honest duration, so a slow runner is fine and a stall is not.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -52,13 +56,18 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
+        # --timeout bounds each test rather than the job: a hanging test otherwise spends the
+        # whole job budget and reports nothing useful. dream_render_tests has hung before --
+        # a menu test looping forever -- and the fastest of these runs in under a second, so a
+        # test still going after five minutes is stuck rather than slow.
+        run: ctest --test-dir build -C Release --output-on-failure --timeout 300
 
   # macOS ARM64 is the primary development platform and is verified locally on every change. On a
   # private repository its runner minutes cost 10x Linux, so it runs only on manual dispatch and on
   # tags; make it unconditional if the repository goes public.
   build-macos:
     name: macos-arm64 (dev interpreter OFF)
+    timeout-minutes: 40  # macOS minutes cost ten times Linux, so a stall here is the expensive one
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: macos-latest
     steps:
@@ -78,11 +87,16 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
+        # --timeout bounds each test rather than the job: a hanging test otherwise spends the
+        # whole job budget and reports nothing useful. dream_render_tests has hung before --
+        # a menu test looping forever -- and the fastest of these runs in under a second, so a
+        # test still going after five minutes is stuck rather than slow.
+        run: ctest --test-dir build -C Release --output-on-failure --timeout 300
 
   format:
     name: clang-format
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Check formatting
@@ -97,6 +111,7 @@ jobs:
   toolchain-container:
     name: toolchain container (KOS hello)
     runs-on: ubuntu-latest
+    timeout-minutes: 45  # a cold Docker build of the SH-4 toolchain is the slowest thing here
     steps:
       - uses: actions/checkout@v4
       - name: Build image

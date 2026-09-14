@@ -49,6 +49,7 @@
 #include "dream/render/background.h"
 #include "dream/render/display_list.h"
 #include "dream/render/framebuffer.h"
+#include "dream/render/input_menu.h"
 #include "dream/render/overlay.h"
 #include "dream/render/vk/offscreen.h"
 #include "dream/render/vk/present.h"
@@ -235,6 +236,7 @@ struct Live {
         if (!window.poll())
             return false;
         update_counter(guest_cycles);
+        pump_menu();
 
         dream::render::FramebufferInfo fb;
         const bool described = dream::render::describe_framebuffer(pvr_.reg_block(), fb);
@@ -268,10 +270,14 @@ struct Live {
         // picture. Deliberately not into the buffers screenshot() and capture() read: F12 and F11
         // are meant to produce the game's own pixels, which is what makes one comparable with
         // another and usable as a reference image.
-        if (show_fps)
+        if (show_fps || menu.is_open())
             presenter.upload(cmd, source, shown.width, shown.height,
                              [this](std::uint32_t* px, std::uint32_t w, std::uint32_t h) {
-                                 draw_counter(px, w, h);
+                                 if (show_fps)
+                                     draw_counter(px, w, h);
+                                 // Last, so the screen sits over the counter rather than under it.
+                                 if (menu.is_open())
+                                     menu.draw(px, w, w, h, window.devices());
                              });
         else
             presenter.upload(cmd, source, shown.width, shown.height);
@@ -316,34 +322,162 @@ struct Live {
     }
 
     // What the player is pressing, as a Maple controller sees it. The buttons are active low.
+    //
+    // Everything here comes through the player's bindings rather than off fixed keys, so a pad and
+    // the keyboard are both live and either can be rebound. The stick and the triggers are read as
+    // values rather than as flags: a real pad's travel reaches the guest, and a keyboard still
+    // produces the extremes it always did, because a digital source reads a full 1.0.
     void read_controls(dream::maple::ControllerState& pad) const {
-        using dream::render::vk::Control;
+        using dream::render::PadControl;
         std::uint16_t held = 0;
-        if (window.held(Control::Up))
+        if (window.pad_held(PadControl::Up))
             held |= dream::maple::kUp;
-        if (window.held(Control::Down))
+        if (window.pad_held(PadControl::Down))
             held |= dream::maple::kDown;
-        if (window.held(Control::Left))
+        if (window.pad_held(PadControl::Left))
             held |= dream::maple::kLeft;
-        if (window.held(Control::Right))
+        if (window.pad_held(PadControl::Right))
             held |= dream::maple::kRight;
-        if (window.held(Control::A))
+        if (window.pad_held(PadControl::A))
             held |= dream::maple::kA;
-        if (window.held(Control::B))
+        if (window.pad_held(PadControl::B))
             held |= dream::maple::kB;
-        if (window.held(Control::X))
+        if (window.pad_held(PadControl::X))
             held |= dream::maple::kX;
-        if (window.held(Control::Y))
+        if (window.pad_held(PadControl::Y))
             held |= dream::maple::kY;
-        if (window.held(Control::Start))
+        if (window.pad_held(PadControl::Start))
             held |= dream::maple::kStart;
         pad.buttons = static_cast<std::uint16_t>(0xFFFFu & ~held);
-        // A keyboard has no analogue axes, so the d-pad drives the stick as well: a title that
-        // steers with the stick and ignores the d-pad is otherwise unplayable from a keyboard.
-        pad.joy_x = axis(window.held(Control::Left), window.held(Control::Right));
-        pad.joy_y = axis(window.held(Control::Up), window.held(Control::Down));
-        pad.ltrigger = window.held(Control::LeftTrigger) ? std::uint8_t{0xFF} : std::uint8_t{0};
-        pad.rtrigger = window.held(Control::RightTrigger) ? std::uint8_t{0xFF} : std::uint8_t{0};
+        pad.joy_x = dream::maple::axis_byte(window.pad_value(PadControl::StickLeft),
+                                            window.pad_value(PadControl::StickRight));
+        pad.joy_y = dream::maple::axis_byte(window.pad_value(PadControl::StickUp),
+                                            window.pad_value(PadControl::StickDown));
+        pad.ltrigger = dream::maple::trigger_byte(window.pad_value(PadControl::LeftTrigger));
+        pad.rtrigger = dream::maple::trigger_byte(window.pad_value(PadControl::RightTrigger));
+    }
+
+    // --- the binding screen --------------------------------------------------------------------
+
+    // Its keys are the launcher's fixed ones, never the player's: rebinding the game's buttons can
+    // never take away the way back out. Called once per poll, running or paused.
+    void pump_menu() {
+        using dream::render::vk::Control;
+        // Escape does two things a keystroke apart: leave the screen, then end the run. The key has
+        // to be let go before it means the second one. Without this, closing the screen with escape
+        // re-arms quit under a finger that is still down, and one key repeat ends the run -- which
+        // from the outside is indistinguishable from a crash.
+        if (rearm_escape && !window.held(Control::Back)) {
+            rearm_escape = false;
+            window.set_escape_quits(true);
+        }
+        if (window.pressed(Control::Menu)) {
+            if (menu.is_open())
+                close_menu();
+            else
+                open_menu();
+            return;
+        }
+        if (!menu.is_open())
+            return;
+        // A finished capture takes the frame to itself. The escape that cancelled one is also a
+        // Back press, and closing the screen on it would make cancelling and leaving the same
+        // keystroke.
+        dream::render::Binding captured;
+        bool cancelled = false;
+        if (window.take_capture(captured, cancelled)) {
+            menu.apply_capture(captured, cancelled);
+            apply_bindings();
+            return;
+        }
+        if (window.pressed(Control::Back)) {
+            menu.back();  // one leaves a capture, a second leaves the screen
+            if (!menu.is_open())
+                close_menu();
+            return;
+        }
+        if (window.pressed(Control::Up))
+            menu.move(-1);
+        if (window.pressed(Control::Down))
+            menu.move(1);
+        // The device row counts what is actually plugged in, so the selector wraps over the
+        // keyboard and however many pads are connected right now.
+        const unsigned devices = static_cast<unsigned>(window.devices().size());
+        if (window.pressed(Control::Left))
+            menu.adjust(-1, devices);
+        if (window.pressed(Control::Right))
+            menu.adjust(1, devices);
+        if (window.pressed(Control::Start) || window.pressed(Control::A)) {
+            if (menu.activate() == dream::render::InputMenu::Action::Close) {
+                close_menu();
+                return;
+            }
+            // Activating a binding row asks for an input; the window collects it for us.
+            if (menu.awaiting())
+                window.begin_capture();
+        }
+        apply_bindings();
+    }
+
+    void open_menu() {
+        menu.open(window.bindings());
+        bindings_dirty = false;
+        rearm_escape = false;
+        // While the screen is up, escape backs out of it rather than ending the run.
+        window.set_escape_quits(false);
+    }
+
+    void close_menu() {
+        menu.close();
+        window.cancel_capture();
+        rearm_escape = true;  // not until escape is released; see pump_menu()
+        if (!bindings_dirty)
+            return;
+        bindings_dirty = false;
+        if (bindings_path.empty()) {
+            std::printf("bindings changed for this run only: no file to save them in\n");
+            return;
+        }
+        if (save_bindings())
+            std::printf("bindings saved to %s\n", bindings_path.c_str());
+        else
+            std::fprintf(stderr, "cannot write the bindings to %s\n", bindings_path.c_str());
+    }
+
+    // Applied live, so a rebound control works the moment it is bound rather than after a restart.
+    // The file waits until the screen closes: a dead zone nudged five times is one save, not five.
+    void apply_bindings() {
+        if (!menu.dirty())
+            return;
+        menu.mark_saved();
+        bindings_dirty = true;
+        window.set_bindings(menu.bindings());
+    }
+
+    // A missing file is the ordinary first run, not a fault: the defaults are the layout the
+    // launcher always had, so nothing needs to exist for the keyboard to work.
+    void load_bindings() {
+        dream::render::Bindings b = dream::render::Bindings::defaults();
+        std::ifstream in(bindings_path, std::ios::binary);
+        if (!bindings_path.empty() && in) {
+            const std::string text((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            std::string warnings;
+            b = dream::render::Bindings::from_text(text, &warnings);
+            if (!warnings.empty())
+                std::fprintf(stderr, "%s:\n%s", bindings_path.c_str(), warnings.c_str());
+            std::printf("bindings: %s\n", bindings_path.c_str());
+        }
+        window.set_bindings(b);
+    }
+
+    bool save_bindings() const {
+        std::ofstream out(bindings_path, std::ios::binary);
+        if (!out)
+            return false;
+        const std::string text = menu.bindings().to_text();
+        out.write(text.data(), static_cast<std::streamsize>(text.size()));
+        return static_cast<bool>(out);
     }
 
     // Averaged over a window rather than taken frame to frame: an instantaneous figure on a
@@ -392,6 +526,24 @@ struct Live {
     }
 
     void screenshot_to(const std::string& name) {
+        // --screenshot-presented: what is actually on the screen, through the presenter, with the
+        // overlays and the resolve. The default below is the game's own pixels instead, which is
+        // what makes one screenshot comparable with another; this is for looking at the display
+        // path itself, which nothing else can see.
+        if (shot_presented) {
+            std::vector<std::uint8_t> px;
+            std::uint32_t w = 0, h = 0;
+            if (window.read_pixels(px, w, h)) {
+                if (FILE* pf = std::fopen(name.c_str(), "wb")) {
+                    std::fprintf(pf, "P6\n%u %u\n255\n", w, h);
+                    std::fwrite(px.data(), 1, px.size(), pf);
+                    std::fclose(pf);
+                }
+                return;
+            }
+            std::fprintf(stderr, "could not read the presented image back\n");
+            return;
+        }
         FILE* f = std::fopen(name.c_str(), "wb");
         if (!f)
             return;
@@ -455,15 +607,6 @@ struct Live {
         return static_cast<dream::render::PaletteFormat>(pvr_.reg(0x108) & 3u);
     }
 
-    // One analogue axis from two keys: fully one way, fully the other, or centred.
-    static std::uint8_t axis(bool low, bool high) {
-        if (low)
-            return 0x00;
-        if (high)
-            return 0xFF;
-        return 0x80;
-    }
-
     static unsigned bytes_per_written_pixel(const dream::render::FramebufferInfo& info) {
         switch (info.format) {
             case dream::render::FramebufferFormat::Rgb888:
@@ -496,6 +639,15 @@ struct Live {
     // looks (frames actually presented per second of wall clock) and whether it is keeping up
     // (guest time elapsed per second of wall clock, where 1.00x is the console's own pace).
     bool show_fps = false;
+    // The binding screen (F1, or a pad's select button). The guest is stopped while it is up, so
+    // nobody rebinds a control mid-corner.
+    dream::render::InputMenu menu;
+    // Where a change is written back. Empty means this run only: --bindings was pointed nowhere
+    // usable, or SDL could not name a settings directory on this host.
+    std::string bindings_path;
+    bool bindings_dirty = false;  // changed since the screen was opened
+    // Escape closes the screen and also quits: quit stays disarmed until the key comes back up.
+    bool rearm_escape = false;
     // --screenshot-at N / --capture-at N: the same thing F12 and F11 do, at the Nth presented
     // frame, for a run with nobody at the keyboard. These were environment variables, which is
     // fine for a one-off and wrong for something the documentation tells people to use.
@@ -504,7 +656,8 @@ struct Live {
     std::uint64_t fps_frames_at_mark = 0;
     double fps_guest_at_mark = 0;
     double fps_shown = 0, speed_shown = 0;
-    bool writeback = false;  // --framebuffer-writeback
+    bool writeback = false;       // --framebuffer-writeback
+    bool shot_presented = false;  // --screenshot-presented
     bool have_frame = false, from_renderer = false, reported_error = false;
 
 private:
@@ -904,7 +1057,17 @@ void usage(const char* argv0, std::FILE* out) {
         "  --window               open a window and play; implies sound\n"
         "  --scale N              draw at N times the guest's 640x480 (1 to 4, default 1)\n"
         "  --fps                  start with the on-screen frame-rate counter showing\n"
-        "  --vmu FILE             a 128 KB memory-card image; writes are saved back to it\n"
+        "  --present-mode M       vsync (default), mailbox or immediate. The default paces the\n"
+        "                         whole run to the panel, so --unthrottled with a window measures\n"
+        "                         the refresh rate rather than the emulator.\n"
+        "  --bindings FILE        controller bindings; the default is one file per user, shared\n"
+        "                         by every title. F1 (or a pad's select button) opens the screen\n"
+        "                         that edits them, and writes them back here.\n"
+        "  --vmu FILE             a 128 KB memory-card image; writes are saved back to it.\n"
+        "                         Created, blank and formatted, if the path does not exist. A "
+        "file\n"
+        "                         that is not a card is refused, never overwritten.\n"
+        "  --no-create-vmu        fail instead of creating a missing card\n"
         "  --unthrottled          run as fast as the host can rather than at the guest's clock\n"
         "  --no-audio / --audio   force sound off, or on for a headless run\n"
         "\n"
@@ -965,10 +1128,25 @@ int main(int argc, char** argv) {
     // nobody chose is indistinguishable from a crash, and the flag is right there for the runs
     // that do want bounding: every headless check in this repository passes it explicitly.
     std::uint64_t max_frames = 0, max_seconds = 0, sample_every = 0;
-    bool interpret_all = false;       // dev builds: run everything through the interpreter
-    std::string wav;                  // --wav FILE: record the AICA output (16-bit stereo 44.1 kHz)
-    std::string dump_aram;            // --dump-aram FILE: write the 2 MB of sound RAM at the stop
-    std::string dump_ta;              // --dump-ta FILE: write one render's TA parameter stream
+    bool interpret_all = false;  // dev builds: run everything through the interpreter
+    std::string wav;             // --wav FILE: record the AICA output (16-bit stereo 44.1 kHz)
+    std::string dump_aram;       // --dump-aram FILE: write the 2 MB of sound RAM at the stop
+    std::string dump_ta;         // --dump-ta FILE: write one render's TA parameter stream
+    // --no-create-vmu: fail rather than make a card when --vmu names nothing. For a scripted run
+    // that should not be quietly writing files.
+    bool no_create_vmu = false;
+    // --screenshot-presented: capture what reached the screen rather than the game's own
+    // pixels. For looking at the display path -- overlays, letterboxing, the resolve.
+    bool shot_presented = false;
+#ifdef DREAM_WITH_RENDERER
+    // --present-mode: vsync paces the run to the panel, which is right for playing and wrong for
+    // measuring. Nothing about the guest changes either way.
+    auto present_mode = dream::render::vk::Window::PresentMode::Fifo;
+#endif
+    // --bindings FILE: where the controller layout is read from and written back to. Unset means
+    // the host's per-user settings directory, so one layout follows the player across every title.
+    std::string bindings_file;
+    bool bindings_file_set = false;
     std::string vmu;                  // --vmu FILE: a 128 KB memory-card image in the standard
                                       // layout, as any Dreamcast tool or emulator writes. Writes
                                       // go back to the file. Never committed: owner data.
@@ -1044,7 +1222,27 @@ int main(int argc, char** argv) {
             dump_ta = argv[++i];
         else if (!std::strcmp(argv[i], "--dump-vram") && i + 1 < argc)
             dump_vram = argv[++i];
-        else if (!std::strcmp(argv[i], "--vmu") && i + 1 < argc)
+        else if (!std::strcmp(argv[i], "--no-create-vmu"))
+            no_create_vmu = true;
+        else if (!std::strcmp(argv[i], "--screenshot-presented"))
+            shot_presented = true;
+        else if (!std::strcmp(argv[i], "--present-mode") && i + 1 < argc) {
+            const char* m = argv[++i];
+            using PM = dream::render::vk::Window::PresentMode;
+            if (!std::strcmp(m, "mailbox"))
+                present_mode = PM::Mailbox;
+            else if (!std::strcmp(m, "immediate"))
+                present_mode = PM::Immediate;
+            else if (!std::strcmp(m, "vsync") || !std::strcmp(m, "fifo"))
+                present_mode = PM::Fifo;
+            else {
+                std::fprintf(stderr, "unknown present mode %s: vsync, mailbox or immediate\n", m);
+                return 2;
+            }
+        } else if (!std::strcmp(argv[i], "--bindings") && i + 1 < argc) {
+            bindings_file = argv[++i];
+            bindings_file_set = true;
+        } else if (!std::strcmp(argv[i], "--vmu") && i + 1 < argc)
             vmu = argv[++i];
         else if (!std::strcmp(argv[i], "--dump-ta-frame") && i + 1 < argc)
             dump_ta_frame = std::strtoull(argv[++i], nullptr, 0);
@@ -1276,12 +1474,41 @@ int main(int argc, char** argv) {
     dream::maple::MemoryCard* card_ptr = nullptr;
     if (!vmu.empty()) {
         auto card = std::make_unique<dream::maple::MemoryCard>();
-        if (!card->load(vmu)) {
-            std::fprintf(stderr, "cannot read the memory card image %s\n", vmu.c_str());
-            return 2;
+        switch (card->load(vmu)) {
+            case dream::maple::CardStatus::Ok:
+                std::printf("memory card %s: %s\n", vmu.c_str(),
+                            card->formatted() ? "formatted" : "present but not formatted");
+                break;
+            case dream::maple::CardStatus::Missing:
+                // Made only when nothing is there. Titles do not all offer to format a blank card
+                // -- Crazy Taxi reads the system block, finds no marker and simply refuses to save
+                // -- so an empty file would be no better than none.
+                if (no_create_vmu) {
+                    std::fprintf(stderr,
+                                 "no memory card at %s (drop --no-create-vmu to make one)\n",
+                                 vmu.c_str());
+                    return 2;
+                }
+                card->format();
+                if (!card->save_as(vmu)) {
+                    std::fprintf(stderr, "cannot create a memory card at %s\n", vmu.c_str());
+                    return 2;
+                }
+                std::printf("memory card %s: created, formatted and empty\n", vmu.c_str());
+                break;
+            case dream::maple::CardStatus::WrongSize:
+                // Never overwritten. save() rewrites the whole 128 KB after every block write, so
+                // adopting a file that is not a card destroys it the moment the title saves.
+                std::fprintf(stderr,
+                             "%s is not a memory card image: a card is exactly %zu bytes.\n"
+                             "Refusing to touch it. Point --vmu at a card, or at a path that does "
+                             "not exist yet and one will be made.\n",
+                             vmu.c_str(), dream::maple::MemoryCard::kImageSize);
+                return 2;
+            case dream::maple::CardStatus::Unreadable:
+                std::fprintf(stderr, "cannot read the memory card image %s\n", vmu.c_str());
+                return 2;
         }
-        std::printf("memory card %s: %s\n", vmu.c_str(),
-                    card->formatted() ? "formatted" : "blank (the title may offer to format it)");
         card_ptr = card.get();
         maple.attach_expansion(0, 0, std::move(card));
     }
@@ -1334,6 +1561,8 @@ int main(int argc, char** argv) {
         live = std::make_unique<Live>(sys.memory, pvr);
         live->writeback = writeback;
         live->show_fps = start_with_fps;
+        live->shot_presented = shot_presented;
+        live->window.set_present_mode(present_mode);
         live->screenshot_at = screenshot_at;
         live->capture_at = capture_at;
         // The window names the title being run. The config is the only place that name is written
@@ -1344,6 +1573,11 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "window: %s\n", live->error.c_str());
             return 2;
         }
+        // After the window, because resolving a binding's name to a code needs SDL initialised.
+        live->bindings_path =
+            bindings_file_set ? bindings_file : dream::render::vk::default_bindings_path();
+        live->load_bindings();
+        std::printf("F1 (or a pad's select button) opens the controller bindings\n");
         auto previous_render = std::move(pvr.on_render);
         pvr.on_render = [&live, previous_render](const std::vector<std::uint32_t>& stream) {
             if (previous_render)
@@ -1354,12 +1588,30 @@ int main(int argc, char** argv) {
         // reference: sleep only while ahead of it, never speed anything up to catch up, because a
         // frame that took too long is gone and pretending otherwise makes the audio stutter.
         const auto started = std::chrono::steady_clock::now();
+        // Wall-clock time the guest was stopped for, which the pacing below owes back. Without it
+        // the run would sprint to catch up the moment the binding screen closed.
+        auto paused_for = std::chrono::steady_clock::duration::zero();
         auto previous_vblank = std::move(sys.spg.on_vblank_out);
         sys.spg.on_vblank_out = [&, previous_vblank, started] {
             if (previous_vblank)
                 previous_vblank();
             if (!live->present(sys.spg.frames(), sys.ctx.cycles))
                 throw StopRun{"the window was closed"};
+            // The binding screen stops the guest rather than drawing over a running one: nobody
+            // rebinds a control mid-corner, and a control being captured cannot also be played.
+            // The window keeps presenting, so the screen still draws and still answers the player.
+            if (live->menu.is_open()) {
+                const auto paused_at = std::chrono::steady_clock::now();
+                while (live->menu.is_open()) {
+                    if (!live->present(sys.spg.frames(), sys.ctx.cycles))
+                        throw StopRun{"the window was closed"};
+                    // Enough to keep the screen responsive without spinning a core on a still
+                    // picture; the guest clock is not advancing, so there is nothing to keep up
+                    // with.
+                    std::this_thread::sleep_for(std::chrono::milliseconds(8));
+                }
+                paused_for += std::chrono::steady_clock::now() - paused_at;
+            }
             // Scripted presses win while they are held, so --press still works with a window open.
             if (scripted.empty() || pad_ptr->state.buttons == 0xFFFFu)
                 live->read_controls(pad_ptr->state);
@@ -1368,7 +1620,8 @@ int main(int argc, char** argv) {
             const auto guest =
                 std::chrono::duration<double>(static_cast<double>(sys.ctx.cycles) / 200e6);
             const auto target =
-                started + std::chrono::duration_cast<std::chrono::steady_clock::duration>(guest);
+                started + paused_for +
+                std::chrono::duration_cast<std::chrono::steady_clock::duration>(guest);
             const auto now = std::chrono::steady_clock::now();
             if (target > now && target - now < std::chrono::seconds(1))
                 std::this_thread::sleep_for(target - now);
