@@ -2,9 +2,14 @@
 // One triangle large enough to cover the screen, so presenting a finished frame needs no vertex
 // buffer at all. The texture coordinates come from the unscaled position, so shrinking the
 // triangle letterboxes the image instead of stretching it.
+//
+// The block is declared whole in both stages because Vulkan gives the two one shared push-constant
+// range; the fragment stage reads the two fields this one ignores.
 layout(push_constant) uniform Push {
     vec2 scale;
     vec2 offset;
+    vec2 texel;
+    vec2 taps;
 } push;
 
 layout(location = 0) out vec2 v_uv;

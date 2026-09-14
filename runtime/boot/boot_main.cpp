@@ -526,6 +526,24 @@ struct Live {
     }
 
     void screenshot_to(const std::string& name) {
+        // --screenshot-presented: what is actually on the screen, through the presenter, with the
+        // overlays and the resolve. The default below is the game's own pixels instead, which is
+        // what makes one screenshot comparable with another; this is for looking at the display
+        // path itself, which nothing else can see.
+        if (shot_presented) {
+            std::vector<std::uint8_t> px;
+            std::uint32_t w = 0, h = 0;
+            if (window.read_pixels(px, w, h)) {
+                if (FILE* pf = std::fopen(name.c_str(), "wb")) {
+                    std::fprintf(pf, "P6\n%u %u\n255\n", w, h);
+                    std::fwrite(px.data(), 1, px.size(), pf);
+                    std::fclose(pf);
+                }
+                return;
+            }
+            std::fprintf(stderr, "could not read the presented image back\n");
+            return;
+        }
         FILE* f = std::fopen(name.c_str(), "wb");
         if (!f)
             return;
@@ -638,7 +656,8 @@ struct Live {
     std::uint64_t fps_frames_at_mark = 0;
     double fps_guest_at_mark = 0;
     double fps_shown = 0, speed_shown = 0;
-    bool writeback = false;  // --framebuffer-writeback
+    bool writeback = false;       // --framebuffer-writeback
+    bool shot_presented = false;  // --screenshot-presented
     bool have_frame = false, from_renderer = false, reported_error = false;
 
 private:
@@ -1113,6 +1132,9 @@ int main(int argc, char** argv) {
     // --no-create-vmu: fail rather than make a card when --vmu names nothing. For a scripted run
     // that should not be quietly writing files.
     bool no_create_vmu = false;
+    // --screenshot-presented: capture what reached the screen rather than the game's own
+    // pixels. For looking at the display path -- overlays, letterboxing, the resolve.
+    bool shot_presented = false;
     // --bindings FILE: where the controller layout is read from and written back to. Unset means
     // the host's per-user settings directory, so one layout follows the player across every title.
     std::string bindings_file;
@@ -1194,6 +1216,8 @@ int main(int argc, char** argv) {
             dump_vram = argv[++i];
         else if (!std::strcmp(argv[i], "--no-create-vmu"))
             no_create_vmu = true;
+        else if (!std::strcmp(argv[i], "--screenshot-presented"))
+            shot_presented = true;
         else if (!std::strcmp(argv[i], "--bindings") && i + 1 < argc) {
             bindings_file = argv[++i];
             bindings_file_set = true;
@@ -1516,6 +1540,7 @@ int main(int argc, char** argv) {
         live = std::make_unique<Live>(sys.memory, pvr);
         live->writeback = writeback;
         live->show_fps = start_with_fps;
+        live->shot_presented = shot_presented;
         live->screenshot_at = screenshot_at;
         live->capture_at = capture_at;
         // The window names the title being run. The config is the only place that name is written

@@ -13,6 +13,8 @@ namespace {
 struct PushConstants {
     float scale[2];
     float offset[2];
+    float texel[2];  // one source texel in texture coordinates
+    float taps[2];   // source texels per output pixel, per axis; 1 or less when magnifying
 };
 
 VkShaderModule make_module(VkDevice device, const std::uint32_t* code, std::size_t bytes) {
@@ -83,7 +85,10 @@ bool Presenter::create(Context& ctx, VkRenderPass render_pass) {
         return false;
     }
 
-    VkPushConstantRange range{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants)};
+    // Both stages share one range: the vertex shader fits the quad, the fragment shader
+    // resolves with it.
+    VkPushConstantRange range{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                              sizeof(PushConstants)};
     VkPipelineLayoutCreateInfo plci{};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     plci.setLayoutCount = 1;
@@ -340,15 +345,30 @@ bool Presenter::draw(VkCommandBuffer cmd, VkExtent2D target) {
     const float image_aspect = static_cast<float>(width_) / static_cast<float>(height_);
     const float target_aspect =
         static_cast<float>(target.width) / static_cast<float>(target.height);
-    PushConstants push{{1.0f, 1.0f}, {0.0f, 0.0f}};
+    PushConstants push{{1.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f}};
     if (target_aspect > image_aspect)
         push.scale[0] = image_aspect / target_aspect;
     else
         push.scale[1] = target_aspect / image_aspect;
 
+    // How many source pixels each drawn pixel covers. --scale draws the guest's 640x480 at a
+    // multiple of that and the window is usually smaller than the result, so this is normally
+    // above 1 and the fragment shader averages rather than picking one sample out of several.
+    // Measured against the drawn area rather than the whole window, because letterboxing means
+    // they are not the same thing.
+    const float drawn_w = static_cast<float>(target.width) * push.scale[0];
+    const float drawn_h = static_cast<float>(target.height) * push.scale[1];
+    push.texel[0] = 1.0f / static_cast<float>(width_);
+    push.texel[1] = 1.0f / static_cast<float>(height_);
+    if (drawn_w > 0.0f)
+        push.taps[0] = static_cast<float>(width_) / drawn_w;
+    if (drawn_h > 0.0f)
+        push.taps[1] = static_cast<float>(height_) / drawn_h;
+
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &set_, 0, nullptr);
-    vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof push, &push);
+    vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                       sizeof push, &push);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     return true;
 }
