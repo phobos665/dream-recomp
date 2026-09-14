@@ -93,7 +93,7 @@ function(dream_add_game id)
     COMMENT "Translating ${ARG_TITLE}"
     VERBATIM)
 
-  add_executable(${id}_boot ${CMAKE_SOURCE_DIR}/runtime/boot/boot_main.cpp ${_units})
+  add_executable(${id}_boot ${DREAM_ROOT}/runtime/boot/boot_main.cpp ${_units})
   target_link_libraries(${id}_boot PRIVATE dream::runtime dream::translator)
   # --window needs the Vulkan backend, which is optional (render/CMakeLists.txt returns early when
   # Vulkan, SDL3 or glslc are missing). Without it the launcher still builds and runs headless, and

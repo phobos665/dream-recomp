@@ -22,9 +22,9 @@ add_library(dream::render ALIAS dream_render)
 
 # The device-independent half is tested on every runner, with or without a GPU.
 if(DREAM_BUILD_TESTS)
-  add_executable(dream_render_tests tests/test_display_list.cpp tests/test_texture.cpp tests/test_framebuffer.cpp tests/test_tsp.cpp tests/test_background.cpp tests/test_fog.cpp tests/test_overlay.cpp tests/test_input.cpp tests/test_input_menu.cpp ${CMAKE_SOURCE_DIR}/runtime/tests/test_main.cpp)
+  add_executable(dream_render_tests tests/test_display_list.cpp tests/test_texture.cpp tests/test_framebuffer.cpp tests/test_tsp.cpp tests/test_background.cpp tests/test_fog.cpp tests/test_overlay.cpp tests/test_input.cpp tests/test_input_menu.cpp ${DREAM_ROOT}/runtime/tests/test_main.cpp)
   target_link_libraries(dream_render_tests PRIVATE dream::render)
-  target_include_directories(dream_render_tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/doctest)
+  target_include_directories(dream_render_tests SYSTEM PRIVATE ${DREAM_ROOT}/third_party/doctest)
   dream_target_defaults(dream_render_tests)
   add_test(NAME render.unit COMMAND dream_render_tests)
 endif()

@@ -29,10 +29,20 @@ cp dream-recomp/templates/game-repo/gitignore-fragment .gitignore
 Then replace `<TITLE>` and `<id>` through the skill, and follow
 `dream-recomp/docs/per-game-bring-up.md` from Step 1.
 
-## One thing to check first
+## Building
 
-`dream_add_game` resolves `boot_main.cpp` through `CMAKE_SOURCE_DIR`, which is the top-level project
--- your repository, not the submodule. Until that is parameterised upstream, a top-level
-`add_subdirectory(dream-recomp)` will not find it. Check whether the submodule you pinned still has
-that assumption before building, and raise it upstream if so; it is a small change and it is the
-only thing standing between this layout and working out of the box.
+```
+cmake -S . -B build -DDREAM_DEV_INTERPRETER=ON
+cmake --build build --target <id>_boot --parallel
+./build/game/<id>_boot --config game/<id>.toml --no-audio --rtc-seed 1 --max-seconds 20
+```
+
+`add_subdirectory(dream-recomp)` then `add_subdirectory(game)` is all the top-level `CMakeLists.txt`
+needs. The tool resolves its own sources through `DREAM_ROOT` rather than `CMAKE_SOURCE_DIR`, so it
+does not mind being a subproject, and it skips its own reference titles when it is not the top-level
+project -- otherwise their targets would collide with yours the moment you named a game the same
+thing.
+
+Verified on 2026-09-14 by building Crazy Taxi from a repository holding nothing but a config, a
+symbol table and a one-line `game/CMakeLists.txt`: 1209 frames, no untranslated targets, no unmapped
+accesses.

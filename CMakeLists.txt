@@ -4,6 +4,12 @@ project(dream_recomp VERSION 0.1.0 LANGUAGES C CXX)
 # Static recompilation of Sega Dreamcast titles. See docs/implementation-plan.md and
 # docs/decisions/README.md; the compiler flags below implement ADR 16 (cross-ISA determinism).
 
+# Where this project's own sources are, which is not the same thing as CMAKE_SOURCE_DIR once a game
+# repository consumes this as a submodule and becomes the top-level project itself. Cached rather
+# than a plain variable because a sibling add_subdirectory() -- which is exactly how such a
+# repository adds its game directory -- does not see normal variables set in here.
+set(DREAM_ROOT ${CMAKE_CURRENT_SOURCE_DIR} CACHE INTERNAL "dream-recomp source root")
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -48,7 +54,7 @@ endif()
 add_subdirectory(runtime)
 # toml++ (MIT, third_party/tomlplusplus): per-game configuration files (ADR 14). Header-only.
 add_library(dream_toml INTERFACE)
-target_include_directories(dream_toml SYSTEM INTERFACE ${CMAKE_SOURCE_DIR}/third_party/tomlplusplus)
+target_include_directories(dream_toml SYSTEM INTERFACE ${DREAM_ROOT}/third_party/tomlplusplus)
 target_compile_definitions(dream_toml INTERFACE TOML_EXCEPTIONS=0)
 add_library(dream::toml ALIAS dream_toml)
 
@@ -58,13 +64,18 @@ add_subdirectory(translator)
 # Every games/<id>/ with a CMakeLists.txt, so adding a title is adding a directory rather than
 # editing this file too. Each is a no-op without that title's extracted executable, which is every
 # checkout but the one whose owner dumped the disc.
-file(GLOB _dream_games RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/games/*)
-list(SORT _dream_games)  # a stable configure order, so build output is comparable between machines
-foreach(_g IN LISTS _dream_games)
-  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_g}/CMakeLists.txt)
-    add_subdirectory(${_g})
-  endif()
-endforeach()
+# Only when this is the project being built. A game repository consumes this as a submodule and
+# brings its own title, and it wants the tool rather than the reference titles shipped with it --
+# which would otherwise collide on target names the moment it names its game the same thing.
+if(PROJECT_IS_TOP_LEVEL)
+  file(GLOB _dream_games RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/games/*)
+  list(SORT _dream_games)  # a stable configure order, so build output compares between machines
+  foreach(_g IN LISTS _dream_games)
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_g}/CMakeLists.txt)
+      add_subdirectory(${_g})
+    endif()
+  endforeach()
+endif()
 
 if(DREAM_BUILD_TESTS)
   add_subdirectory(tests)
