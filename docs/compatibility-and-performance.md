@@ -212,6 +212,39 @@ per-frame staging arena reset on frame completion, or a deferred free that runs 
 buffer that used it retires -- and `TextureCache` currently has no notion of a frame boundary at
 all. **Estimate it after that hook exists, not before.**
 
+### The resume_at class, investigated 2026-09-14
+
+The release build's first gameplay fault is `cannot resume at 0x0c081e56 (non-local return)`. The
+emitter gives a function resume labels for its basic-block starts and its call-return sites, and
+`0x0c081e56` is neither: it sits immediately after an `rts` and its delay slot, so nothing inside
+the function falls through or branches to it. The function's *range* covers the address, so
+`find_containing` succeeds, but the emitted code has no block there at all -- the instructions are
+never decoded and never emitted.
+
+**A generic emitter fix is not cheaply available.** Making the emitter start a block after every
+unconditional transfer inside a function's range means deciding whether the bytes there are code or
+a literal pool, and on SH-4 a literal pool is exactly what usually follows an `rts`. Getting that
+wrong emits garbage. This is presumably why discovery leaves these as holes for a config to name.
+
+**And naming it is not safe either, which is the useful finding.** Seeding `0x0C081E56` takes the
+release build from frame 408 to frame 1206, and the next fault is the quarantined `fn_0c07b760`
+rather than another resume failure -- so the class is small, perhaps a handful of addresses, not
+thousands. But the gameplay write hash *changes* when it is seeded, while the enclosing function is
+not truncated (still `0x0c07c5d0..0x0c083a8e`, 29,886 bytes) and textures still decode 48 with none
+failed. The change is therefore not the truncation hazard: it is that the code now runs translated
+where it previously ran interpreted, **and the two disagree**.
+
+That makes `0x0c081e56` a candidate emitter defect rather than a missing seed, in the same
+`0x0C081xxx` region this config already records as translating wrongly. The old comment's instinct
+to leave the whole region to the interpreter was right, and the reason is now measured rather than
+suspected. Resolve it with the oracle (`docs/differential-harness.md`) before seeding it; the seed
+is reverted until then.
+
+The wider consequence for compatibility: the untranslated-target count is a poor guide. Two seeds
+and one quarantine move the release build through three separate walls, and the third one is an
+emitter defect. **Closing WP3.2 looks more like fixing a small number of translation bugs than
+like naming thousands of addresses.**
+
 ### Candidates for later, in the order the profile ranks them
 
 1. **Inline the memory fast path into emitted code.** The largest single item, ADR-accepted in
