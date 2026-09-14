@@ -31,7 +31,42 @@ std::string hex(std::uint32_t v) {
 
 }  // namespace
 
+namespace {
+// A direct-mapped cache in front of find_function. The guest calls through registers relentlessly
+// -- 5.9 million times a guest second on Crazy Taxi, one every 34 guest cycles -- and each one was
+// a binary search over a few thousand entries followed by a short scan.
+//
+// Only unambiguous addresses go in, and that is what makes it safe. find_function is not a pure
+// function of the address: where a title installs an overlay, several entries share one address and
+// the right one is chosen by reading a signature out of guest memory, so the answer there changes
+// during the run. register_functions sorts signed entries *before* the unsigned one at the same
+// address, so an address whose first entry is unsigned has no overlay at all and its answer is a
+// property of the table alone. Those are cached; everything else takes the slow path every time,
+// exactly as before.
+constexpr std::size_t kFnCacheSize = 1u << 12;
+struct FnCacheEntry {
+    std::uint32_t phys;
+    GuestFn fn;  // null means the slot is empty; only hits are cached
+};
+FnCacheEntry g_fn_cache[kFnCacheSize]{};
+
+inline std::size_t fn_cache_slot(std::uint32_t phys) noexcept {
+    return (phys >> 1) & (kFnCacheSize - 1);  // guest instructions are two-byte aligned
+}
+
+// Anything that can change what find_function would answer has to empty this, or a run would keep
+// using a translation that is no longer the right one.
+void flush_fn_cache() noexcept {
+    for (auto& e : g_fn_cache) {
+        e.phys = 0;
+        e.fn = nullptr;
+    }
+}
+
+}  // namespace
+
 void register_functions(const FunctionEntry* entries, std::size_t count) noexcept {
+    flush_fn_cache();
     // Keyed by physical address so every RAM alias (P0/P1/P2/P3) of an entry resolves in O(log n).
     auto& t = table();
     for (std::size_t i = 0; i < count; ++i)
@@ -95,6 +130,7 @@ ReplayScope::~ReplayScope() {
 void set_interpret_range(std::uint32_t lo, std::uint32_t hi) noexcept {
     g_interp_lo = lo & 0x1FFFFFFFu;
     g_interp_hi = hi & 0x1FFFFFFFu;
+    flush_fn_cache();  // hiding a function changes what find_function answers for it
 }
 
 void set_interpret_functions(const std::vector<std::pair<std::uint32_t, std::uint32_t>>& fns) {
@@ -104,19 +140,28 @@ void set_interpret_functions(const std::vector<std::pair<std::uint32_t, std::uin
         if (hi > lo)
             g_interp_set.push_back({lo & 0x1FFFFFFFu, hi & 0x1FFFFFFFu});
     std::sort(g_interp_set.begin(), g_interp_set.end());
+    flush_fn_cache();  // same reason as the range above
 }
 
 GuestFn find_function(std::uint32_t address, ::dream::Memory* m) noexcept {
-    const auto& t = table();
     const std::uint32_t phys = address & 0x1FFFFFFFu;
+    FnCacheEntry& slot = g_fn_cache[fn_cache_slot(phys)];
+    if (slot.fn != nullptr && slot.phys == phys)
+        return slot.fn;
+    const auto& t = table();
     if (interpreted(phys))
         return nullptr;
     auto it =
         std::lower_bound(t.begin(), t.end(), phys,
                          [](const FunctionEntry& e, std::uint32_t a) { return e.address < a; });
     for (; it != t.end() && it->address == phys; ++it) {
-        if (!it->signature)
+        if (!it->signature) {
+            // Reached only when no signed entry precedes it at this address, so this answer cannot
+            // change while the table and the interpret set stand.
+            slot.phys = phys;
+            slot.fn = it->fn;
             return it->fn;
+        }
         if (!m)
             continue;
         bool same = true;
