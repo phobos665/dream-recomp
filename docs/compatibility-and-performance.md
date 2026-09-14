@@ -160,7 +160,59 @@ worth keeping, because it is the opposite of what the profile alone suggests.
 
 Also measured and rejected: compiling emitted code at `-O1` is worth 2%.
 
-### The candidates, in the order the profile ranks them
+### What has been done, and what the doing changed
+
+| Item | Projected | Measured | Outcome |
+| --- | --- | --- | --- |
+| `--present-mode` switch | frees the windowed ceiling | nothing on macOS | shipped as a flag, `ae2d87c` |
+| Cache `find_function` | 1.71x | **1.34x** | shipped, `76d95ae` |
+| Pool the texture allocations | ~90 MB | **-16 MB, reverted** | premise was wrong, see below |
+| Inline the RAM fast path | 1.68x | -- | not started |
+
+Throughput is **3.5x to 4.7x real time** headless, and real-time windowed CPU went from about 43% of
+a core to about 38%. Every change was gated on a write-hash comparison -- a rolling hash of every
+guest write, per frame -- and all of them came back byte-identical for both an attract run and a
+scripted gameplay run.
+
+**Two corrections the doing produced.**
+
+The present-mode change does not work here. `VK_PRESENT_MODE_IMMEDIATE_KHR` is accepted by the
+surface and changes nothing: 1185 presents in 9.96 s either way, identical to the frame. MoltenVK
+takes the enum and Metal keeps display sync on. The diagnosis underneath was right, though, and a
+better measurement proves it: raising `--scale` from 1 to 4, sixteen times the pixel work per
+present, costs four percent. Each present **waits** rather than works. Lifting that ceiling means
+looking at `kFramesInFlight`, which is 2, and the fence `begin_frame` blocks on -- not the present
+mode.
+
+`find_function` came in at 1.34x against a projected 1.71x. That projection was measured on a
+prototype that also carried the memory-path change, and the two do not compose by multiplying their
+ratios. **Treat the remaining 1.68x as an upper bound.**
+
+### The texture memory: right symptom, wrong cause
+
+`memory-footprint-study.md` attributes 76 MB to one `vkAllocateMemory` per cached texture at
+`render/src/vk/texture_cache.cpp:171`, rounded up to 2048 KB each by Metal. The symptom is real --
+46 blocks of exactly 2048 KB, resident, for well under a megabyte of pixels. **The cause is not the
+image memory.**
+
+Pooling the image allocations into shared blocks was implemented and measured: the 2048 KB blocks
+were still all there afterwards, the pool's own blocks were added on top, and the footprint went
+*up* by 16 MB. It was reverted.
+
+The real holder is the **staging buffer**, one per entry. `Entry` owns a `HostBuffer staging`
+(`render/include/dream/render/vk/texture_cache.h`), `HostBuffer::ensure` takes an allocation of its
+own, and nothing releases it until the entry is evicted -- so every cached texture keeps a host
+buffer alive for the life of the cache, long after the one copy that needed it. Forty-odd entries,
+one 2 MB allocation each.
+
+Fixing it is a different shape of job from pooling, which is why it was not simply redirected.
+`upload()` takes a command buffer and several textures can be uploaded into one before it is
+submitted, so a single shared buffer would be overwritten before the GPU read it. It needs either a
+per-frame staging arena reset on frame completion, or a deferred free that runs when the command
+buffer that used it retires -- and `TextureCache` currently has no notion of a frame boundary at
+all. **Estimate it after that hook exists, not before.**
+
+### Candidates for later, in the order the profile ranks them
 
 1. **Inline the memory fast path into emitted code.** The largest single item, ADR-accepted in
    principle (mask-and-index, no mmap mirroring in v1), deferred since Phase 2 pending exactly the
