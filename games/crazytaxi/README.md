@@ -1,5 +1,16 @@
 # Crazy Taxi (baseline title)
 
+> **Why this title is in the tool's repository.** It is the reference fixture, not a port. The test
+> suite depends on it: `tests/sh4/CMakeLists.txt` pulls in `slice.cmake`, which translates 31 leaf
+> functions out of a real commercial binary and checks them against the Flycast oracle, and
+> `BOOT_TEST` registers `crazytaxi.boot`. That is the project's central correctness claim --
+> bit-exact against the interpreter on real compiled code -- and hand-written test programs cannot
+> make it. Both are no-ops without the disc, so anyone else's checkout skips them.
+>
+> Nothing here comes off the disc. The config and the symbol table are measured facts about a
+> binary, in the same category as a fixture's expected output. A title you are actually porting
+> belongs in its own repository: see `docs/per-game-bring-up.md` and `templates/game-repo/`.
+
 Per-game project for the Phase 3 baseline (ADR 15, owner's decision 2026-09-10). Nothing from the disc
 is committed; see `.gitignore`.
 
