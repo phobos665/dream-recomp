@@ -904,7 +904,11 @@ void usage(const char* argv0, std::FILE* out) {
         "  --window               open a window and play; implies sound\n"
         "  --scale N              draw at N times the guest's 640x480 (1 to 4, default 1)\n"
         "  --fps                  start with the on-screen frame-rate counter showing\n"
-        "  --vmu FILE             a 128 KB memory-card image; writes are saved back to it\n"
+        "  --vmu FILE             a 128 KB memory-card image; writes are saved back to it.\n"
+        "                         Created, blank and formatted, if the path does not exist. A "
+        "file\n"
+        "                         that is not a card is refused, never overwritten.\n"
+        "  --no-create-vmu        fail instead of creating a missing card\n"
         "  --unthrottled          run as fast as the host can rather than at the guest's clock\n"
         "  --no-audio / --audio   force sound off, or on for a headless run\n"
         "\n"
@@ -965,10 +969,13 @@ int main(int argc, char** argv) {
     // nobody chose is indistinguishable from a crash, and the flag is right there for the runs
     // that do want bounding: every headless check in this repository passes it explicitly.
     std::uint64_t max_frames = 0, max_seconds = 0, sample_every = 0;
-    bool interpret_all = false;       // dev builds: run everything through the interpreter
-    std::string wav;                  // --wav FILE: record the AICA output (16-bit stereo 44.1 kHz)
-    std::string dump_aram;            // --dump-aram FILE: write the 2 MB of sound RAM at the stop
-    std::string dump_ta;              // --dump-ta FILE: write one render's TA parameter stream
+    bool interpret_all = false;  // dev builds: run everything through the interpreter
+    std::string wav;             // --wav FILE: record the AICA output (16-bit stereo 44.1 kHz)
+    std::string dump_aram;       // --dump-aram FILE: write the 2 MB of sound RAM at the stop
+    std::string dump_ta;         // --dump-ta FILE: write one render's TA parameter stream
+    // --no-create-vmu: fail rather than make a card when --vmu names nothing. For a scripted run
+    // that should not be quietly writing files.
+    bool no_create_vmu = false;
     std::string vmu;                  // --vmu FILE: a 128 KB memory-card image in the standard
                                       // layout, as any Dreamcast tool or emulator writes. Writes
                                       // go back to the file. Never committed: owner data.
@@ -1044,6 +1051,8 @@ int main(int argc, char** argv) {
             dump_ta = argv[++i];
         else if (!std::strcmp(argv[i], "--dump-vram") && i + 1 < argc)
             dump_vram = argv[++i];
+        else if (!std::strcmp(argv[i], "--no-create-vmu"))
+            no_create_vmu = true;
         else if (!std::strcmp(argv[i], "--vmu") && i + 1 < argc)
             vmu = argv[++i];
         else if (!std::strcmp(argv[i], "--dump-ta-frame") && i + 1 < argc)
@@ -1276,12 +1285,41 @@ int main(int argc, char** argv) {
     dream::maple::MemoryCard* card_ptr = nullptr;
     if (!vmu.empty()) {
         auto card = std::make_unique<dream::maple::MemoryCard>();
-        if (!card->load(vmu)) {
-            std::fprintf(stderr, "cannot read the memory card image %s\n", vmu.c_str());
-            return 2;
+        switch (card->load(vmu)) {
+            case dream::maple::CardStatus::Ok:
+                std::printf("memory card %s: %s\n", vmu.c_str(),
+                            card->formatted() ? "formatted" : "present but not formatted");
+                break;
+            case dream::maple::CardStatus::Missing:
+                // Made only when nothing is there. Titles do not all offer to format a blank card
+                // -- Crazy Taxi reads the system block, finds no marker and simply refuses to save
+                // -- so an empty file would be no better than none.
+                if (no_create_vmu) {
+                    std::fprintf(stderr,
+                                 "no memory card at %s (drop --no-create-vmu to make one)\n",
+                                 vmu.c_str());
+                    return 2;
+                }
+                card->format();
+                if (!card->save_as(vmu)) {
+                    std::fprintf(stderr, "cannot create a memory card at %s\n", vmu.c_str());
+                    return 2;
+                }
+                std::printf("memory card %s: created, formatted and empty\n", vmu.c_str());
+                break;
+            case dream::maple::CardStatus::WrongSize:
+                // Never overwritten. save() rewrites the whole 128 KB after every block write, so
+                // adopting a file that is not a card destroys it the moment the title saves.
+                std::fprintf(stderr,
+                             "%s is not a memory card image: a card is exactly %zu bytes.\n"
+                             "Refusing to touch it. Point --vmu at a card, or at a path that does "
+                             "not exist yet and one will be made.\n",
+                             vmu.c_str(), dream::maple::MemoryCard::kImageSize);
+                return 2;
+            case dream::maple::CardStatus::Unreadable:
+                std::fprintf(stderr, "cannot read the memory card image %s\n", vmu.c_str());
+                return 2;
         }
-        std::printf("memory card %s: %s\n", vmu.c_str(),
-                    card->formatted() ? "formatted" : "blank (the title may offer to format it)");
         card_ptr = card.get();
         maple.attach_expansion(0, 0, std::move(card));
     }

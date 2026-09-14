@@ -114,16 +114,32 @@ public:
 // The image is the same 128 KB layout every Dreamcast tool uses, so a save made in an emulator can
 // be used directly. Writes go back to the file so progress survives a run. Never commit one: it is
 // the owner's data (docs/owner-tasks.md).
+// What load() found. A missing file is not an error: the caller decides whether to make one, and
+// only the caller knows whether the user asked for that.
+enum class CardStatus { Ok, Missing, WrongSize, Unreadable };
+
 class MemoryCard final : public Device {
 public:
     static constexpr std::size_t kBlocks = 256, kBlockSize = 512;
     static constexpr std::size_t kImageSize = kBlocks * kBlockSize;
 
-    // Loads an image. A missing file leaves the card unformatted rather than absent, which is what
-    // a blank card does. Returns false only when the file exists but cannot be read.
-    bool load(const std::string& path);
+    // Loads an image, and remembers the path to save back to only when it really is a card.
+    //
+    // The size check is the point. save() rewrites the whole 128 KB after every block write, so a
+    // path that is not a card used to be truncated to 131,072 bytes the moment the title saved: a
+    // mistyped argument destroyed whatever it named. Anything that is not exactly kImageSize bytes
+    // is refused, and no path is remembered, so nothing can be written back over it.
+    CardStatus load(const std::string& path);
     // Writes the image back; called automatically after each block write when a path is set.
+    // False when there is no path, which is what a refused load leaves behind.
     bool save() const;
+    // Writes to `path` and adopts it. For creating a card that did not exist yet.
+    bool save_as(const std::string& path);
+
+    // Makes this a blank, formatted card: the system block's geometry, a FAT with the whole user
+    // area free and the directory chain allocated, and an empty directory. The layout is in
+    // docs/vmu-creation-study.md, where every field was checked against two real cards.
+    void format();
 
     std::uint32_t functions() const noexcept override { return kStorage | kLcd | kClock; }
     Reply handle(std::uint8_t command, const std::uint32_t* args, std::size_t nwords,

@@ -7,6 +7,7 @@ add_executable(dream_runtime_tests
   test_gdrom.cpp
   test_bios.cpp
   test_maple.cpp
+  test_memcard.cpp
   test_pvr.cpp
   test_arm7.cpp
   test_mixer.cpp
