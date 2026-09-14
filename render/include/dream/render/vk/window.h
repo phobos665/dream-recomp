@@ -6,12 +6,14 @@
 #include <string>
 #include <vector>
 
+#include "dream/render/input.h"
 #include "dream/render/vk/context.h"
 #include "dream/render/vk/resources.h"
 
 #include <vulkan/vulkan.h>
 
 struct SDL_Window;
+struct SDL_Gamepad;
 
 namespace dream::render::vk {
 
@@ -68,6 +70,37 @@ public:
     // Went down since the previous poll(): for controls that act once rather than hold.
     bool pressed(Control c) const noexcept;
 
+    // --- the guest pad, through the player's bindings ------------------------------------------
+    //
+    // Control above is the launcher's own fixed keys (screenshot, capture, the menu). PadControl is
+    // what the player binds, and the two are separate so that rebinding the game's buttons can
+    // never take the menu key away and leave no way back.
+
+    // Resolves the portable names in `b` to SDL codes once, here, rather than per frame.
+    void set_bindings(const Bindings& b);
+    const Bindings& bindings() const noexcept { return bindings_; }
+
+    bool pad_held(PadControl c) const noexcept;
+    bool pad_pressed(PadControl c) const noexcept;
+    // 0 to 1. A digital source reads 1 while held, except that a trigger with the ramp enabled
+    // rises over about 150 ms, because a keyboard accelerator that is only ever fully down or
+    // fully up is most of why a driving game needs a pad.
+    float pad_value(PadControl c) const noexcept;
+
+    // "KEYBOARD" first, then one row per connected pad. Rebuilt on hot-plug.
+    const std::vector<std::string>& devices() const noexcept { return devices_; }
+    bool gamepad_connected() const noexcept { return !pads_.empty(); }
+
+    // Rebinding: the next physical input becomes a Binding rather than reaching the game. Escape
+    // cancels. While capturing, pad_held() reports nothing, so the key being bound cannot also be
+    // played.
+    void begin_capture() noexcept;
+    void cancel_capture() noexcept;
+    bool capturing() const noexcept { return capturing_; }
+    // True once, on the poll that captured something. `cancelled` distinguishes escape from a
+    // binding, because those mean different things to the caller.
+    bool take_capture(Binding& out, bool& cancelled) noexcept;
+
     // Copies the last presented image into `out` as 8-bit RGB rows, top to bottom. For
     // screenshots and for tests that want to look at what was drawn.
     bool read_pixels(std::vector<std::uint8_t>& out, std::uint32_t& width, std::uint32_t& height);
@@ -104,6 +137,30 @@ private:
     bool pressed_[static_cast<unsigned>(Control::Count)]{};
     bool running_ = true;
     std::string error_;
+
+    // One binding resolved to the codes SDL actually compares against.
+    struct Resolved {
+        BindSource source = BindSource::None;
+        int code = 0;
+        int sign = 1;
+    };
+    Bindings bindings_;
+    Resolved key_[kPadControlCount]{};
+    Resolved gpad_[kPadControlCount]{};
+    bool pad_held_[kPadControlCount]{};
+    bool pad_pressed_[kPadControlCount]{};
+    float pad_value_[kPadControlCount]{};
+    // How long each trigger has been held, for the ramp. In poll ticks rather than seconds, scaled
+    // by the measured frame interval, so a fast host does not ramp faster than a slow one.
+    float ramp_[kPadControlCount]{};
+    std::uint64_t last_poll_ns_ = 0;
+
+    std::vector<SDL_Gamepad*> pads_;
+    std::vector<std::string> devices_;
+    void refresh_devices();
+
+    bool capturing_ = false, captured_ = false, capture_cancelled_ = false;
+    Binding capture_{};
 };
 
 }  // namespace dream::render::vk

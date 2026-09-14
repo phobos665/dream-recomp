@@ -2,6 +2,7 @@
 #include "dream/render/vk/window.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 #include <SDL3/SDL.h>
@@ -26,6 +27,11 @@ Window::~Window() {
 }
 
 bool Window::create(const char* title, int width, int height, bool want_validation) {
+    // Gamepads are optional: a machine with none, or an SDL built without the subsystem, still
+    // gets a window and a keyboard. Failing the whole launch over a missing joystick driver would
+    // be a poor trade.
+    if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD))
+        SDL_ClearError();
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         error_ = std::string("SDL_Init: ") + SDL_GetError();
         return false;
@@ -83,6 +89,10 @@ bool Window::create(const char* title, int width, int height, bool want_validati
         vkCreateSemaphore(ctx_.device(), &sci, nullptr, &acquired_[i]);
         vkCreateSemaphore(ctx_.device(), &sci, nullptr, &rendered_[i]);
     }
+    // Whatever is already plugged in, plus the default bindings, so a pad works on a first run
+    // with no configuration file and no visit to any UI.
+    refresh_devices();
+    set_bindings(Bindings::defaults());
     return create_swapchain();
 }
 
@@ -248,14 +258,149 @@ bool Window::recreate_swapchain() {
     return create_swapchain();
 }
 
+void Window::refresh_devices() {
+    for (SDL_Gamepad* g : pads_)
+        if (g)
+            SDL_CloseGamepad(g);
+    pads_.clear();
+    devices_.clear();
+    devices_.push_back("KEYBOARD");
+    int count = 0;
+    if (SDL_JoystickID* ids = SDL_GetGamepads(&count)) {
+        for (int i = 0; i < count; ++i) {
+            if (SDL_Gamepad* g = SDL_OpenGamepad(ids[i])) {
+                pads_.push_back(g);
+                const char* name = SDL_GetGamepadName(g);
+                devices_.push_back(name && *name ? name : "GAMEPAD");
+            }
+        }
+        SDL_free(ids);
+    }
+}
+
+void Window::set_bindings(const Bindings& b) {
+    bindings_ = b;
+    // Names to codes once, here. Doing it per frame would mean a string lookup per control per
+    // frame, and would also mean a typo in the file costing performance rather than being noticed.
+    auto resolve = [](const DeviceBindings& d, Resolved* out, bool keyboard) {
+        for (unsigned i = 0; i < kPadControlCount; ++i) {
+            const Binding& bind = d.b[i];
+            out[i] = Resolved{};
+            if (!bind.bound())
+                continue;
+            if (keyboard && bind.source == BindSource::Key) {
+                const SDL_Scancode sc = SDL_GetScancodeFromName(bind.code.c_str());
+                if (sc != SDL_SCANCODE_UNKNOWN)
+                    out[i] = Resolved{BindSource::Key, static_cast<int>(sc), 1};
+            } else if (!keyboard && bind.source == BindSource::Button) {
+                const SDL_GamepadButton bt = SDL_GetGamepadButtonFromString(bind.code.c_str());
+                if (bt != SDL_GAMEPAD_BUTTON_INVALID)
+                    out[i] = Resolved{BindSource::Button, static_cast<int>(bt), 1};
+            } else if (!keyboard && bind.source == BindSource::Axis) {
+                const SDL_GamepadAxis ax = SDL_GetGamepadAxisFromString(bind.code.c_str());
+                if (ax != SDL_GAMEPAD_AXIS_INVALID)
+                    out[i] = Resolved{BindSource::Axis, static_cast<int>(ax), bind.sign};
+            }
+            // Anything that did not resolve stays unbound: an unknown name must not throw, and
+            // must not silently become scancode 0, which is a real key.
+        }
+    };
+    resolve(bindings_.keyboard, key_, true);
+    resolve(bindings_.gamepad, gpad_, false);
+    SDL_ClearError();
+}
+
+void Window::begin_capture() noexcept {
+    capturing_ = true;
+    captured_ = false;
+    capture_cancelled_ = false;
+    capture_ = Binding{};
+}
+
+void Window::cancel_capture() noexcept {
+    capturing_ = false;
+    captured_ = false;
+}
+
+bool Window::take_capture(Binding& out, bool& cancelled) noexcept {
+    if (!captured_)
+        return false;
+    captured_ = false;
+    out = capture_;
+    cancelled = capture_cancelled_;
+    return true;
+}
+
 bool Window::poll() {
+    // A capture consumes the physical input that ends it, so the key being bound does not also
+    // reach the game on the same frame.
+    bool captured_this_poll = false;
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
-        if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
-            running_ = false;
-        if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE)
-            running_ = false;
+        switch (ev.type) {
+            case SDL_EVENT_QUIT:
+            case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                running_ = false;
+                break;
+            case SDL_EVENT_GAMEPAD_ADDED:
+            case SDL_EVENT_GAMEPAD_REMOVED:
+                // Hot-plug: rebuild the list and drop every held state. A pad yanked mid-race must
+                // release the accelerator rather than leave it held at its last value.
+                refresh_devices();
+                for (unsigned i = 0; i < kPadControlCount; ++i) {
+                    pad_held_[i] = false;
+                    pad_pressed_[i] = false;
+                    pad_value_[i] = 0.0f;
+                    ramp_[i] = 0.0f;
+                }
+                break;
+            case SDL_EVENT_KEY_DOWN:
+                if (capturing_ && !captured_this_poll) {
+                    captured_this_poll = true;
+                    captured_ = true;
+                    capturing_ = false;
+                    if (ev.key.key == SDLK_ESCAPE) {
+                        capture_cancelled_ = true;
+                    } else if (const char* n = SDL_GetScancodeName(ev.key.scancode); n && *n) {
+                        capture_ = Binding{BindSource::Key, n, 1};
+                    } else {
+                        capture_cancelled_ = true;
+                    }
+                } else if (ev.key.key == SDLK_ESCAPE) {
+                    running_ = false;
+                }
+                break;
+            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                if (capturing_ && !captured_this_poll) {
+                    if (const char* n = SDL_GetGamepadStringForButton(
+                            static_cast<SDL_GamepadButton>(ev.gbutton.button));
+                        n && *n) {
+                        captured_this_poll = true;
+                        captured_ = true;
+                        capturing_ = false;
+                        capture_ = Binding{BindSource::Button, n, 1};
+                    }
+                }
+                break;
+            case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+                // Well past any plausible dead zone, so resting drift never binds an axis by
+                // itself while the user is thinking about which button to press.
+                if (capturing_ && !captured_this_poll && std::abs(ev.gaxis.value) > 20000) {
+                    if (const char* n = SDL_GetGamepadStringForAxis(
+                            static_cast<SDL_GamepadAxis>(ev.gaxis.axis));
+                        n && *n) {
+                        captured_this_poll = true;
+                        captured_ = true;
+                        capturing_ = false;
+                        capture_ = Binding{BindSource::Axis, n, ev.gaxis.value < 0 ? -1 : 1};
+                    }
+                }
+                break;
+            default:
+                break;
+        }
     }
+
     // Read the whole keyboard rather than tracking key events: a frame wants the state as it is
     // now, and a key pressed and released between two polls should not be missed or repeated.
     const bool* keys = SDL_GetKeyboardState(nullptr);
@@ -265,7 +410,79 @@ bool Window::poll() {
         held_[i] = now;
         pressed_[i] = now && !was;
     }
+
+    // Seconds since the last poll, for the trigger ramp. Measured rather than assumed, so the ramp
+    // takes the same wall time on a fast host as on a slow one.
+    const std::uint64_t now_ns = SDL_GetTicksNS();
+    float dt = last_poll_ns_ ? static_cast<float>(now_ns - last_poll_ns_) * 1e-9f : 0.0f;
+    last_poll_ns_ = now_ns;
+    dt = std::clamp(dt, 0.0f, 0.25f);  // a long stall must not jump the ramp to full
+
+    const float dead = static_cast<float>(bindings_.deadzone_percent) / 100.0f;
+    for (unsigned i = 0; i < kPadControlCount; ++i) {
+        // Digital and analogue sources are gathered separately, because only a digital one ramps.
+        // A pad's real trigger position must pass straight through, or a pad would feel worse than
+        // the keyboard it is replacing.
+        bool digital_on = false;
+        float analogue = 0.0f;
+        // While capturing, the game gets nothing: a key held down to bind it must not also drive.
+        if (!capturing_) {
+            if (keys && key_[i].source == BindSource::Key && keys[key_[i].code])
+                digital_on = true;
+            for (SDL_Gamepad* g : pads_) {
+                if (!g)
+                    continue;
+                if (gpad_[i].source == BindSource::Button) {
+                    if (SDL_GetGamepadButton(g, static_cast<SDL_GamepadButton>(gpad_[i].code)))
+                        digital_on = true;
+                } else if (gpad_[i].source == BindSource::Axis) {
+                    const float raw = static_cast<float>(SDL_GetGamepadAxis(
+                                          g, static_cast<SDL_GamepadAxis>(gpad_[i].code))) /
+                                      32767.0f;
+                    // Only the bound half counts, so left and right are separate bindings on one
+                    // stick.
+                    const float half = gpad_[i].sign < 0 ? -raw : raw;
+                    if (half > dead) {
+                        // Rescaled from the dead zone's edge rather than from zero, or the stick
+                        // would jump to `dead` the instant it left the centre.
+                        analogue =
+                            std::max(analogue, std::min(1.0f, (half - dead) / (1.0f - dead)));
+                    }
+                }
+            }
+        }
+
+        const bool is_trigger = i == static_cast<unsigned>(PadControl::LeftTrigger) ||
+                                i == static_cast<unsigned>(PadControl::RightTrigger);
+        float value = analogue;
+        if (is_trigger && bindings_.trigger_ramp) {
+            constexpr float kRampSeconds = 0.15f;
+            ramp_[i] = digital_on ? std::min(1.0f, ramp_[i] + dt / kRampSeconds) : 0.0f;
+            value = std::max(value, ramp_[i]);
+        } else {
+            ramp_[i] = 0.0f;
+            if (digital_on)
+                value = 1.0f;
+        }
+
+        const bool was = pad_held_[i];
+        pad_held_[i] = value > 0.0f;
+        pad_pressed_[i] = pad_held_[i] && !was;
+        pad_value_[i] = value;
+    }
     return running_;
+}
+
+bool Window::pad_held(PadControl c) const noexcept {
+    return pad_held_[static_cast<unsigned>(c)];
+}
+
+bool Window::pad_pressed(PadControl c) const noexcept {
+    return pad_pressed_[static_cast<unsigned>(c)];
+}
+
+float Window::pad_value(PadControl c) const noexcept {
+    return pad_value_[static_cast<unsigned>(c)];
 }
 
 bool Window::held(Control c) const noexcept {
@@ -416,9 +633,15 @@ void Window::destroy() {
         surface_ = VK_NULL_HANDLE;
     }
     ctx_.destroy();
+    for (SDL_Gamepad* g : pads_)
+        if (g)
+            SDL_CloseGamepad(g);
+    pads_.clear();
+    devices_.clear();
     if (window_) {
         SDL_DestroyWindow(window_);
         window_ = nullptr;
+        SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
         // Only the subsystem this class started. SDL_Quit() shuts down every subsystem in the
         // process, including the audio one the launcher's sink is still holding a stream from,
         // and the sink's destructor then runs against a torn-down subsystem and crashes the exit.
