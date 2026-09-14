@@ -73,7 +73,17 @@ sweep = true
 # runtime resolves those itself (runtime/src/sh4/abi_bare.cpp, call_indirect). Naming one of those
 # here makes it a discovery seed, which truncates the function containing it and silently corrupts
 # what that function computes.
-extra = [0x0C020000]
+extra = [0x0C020000, 0x0C081476]
+# 0x0C081476 is a real function entry, not a jump into the middle of one: fn_0c081200 ends cleanly
+# at the rts/delay-slot pair 0x0c081472..0x0c081474, and a fresh block starts on the next
+# instruction. Nothing references it statically -- it is only ever reached through a register -- so
+# discovery leaves 0x0c081476..0x0c081560 as a hole, and call_indirect cannot cover it either,
+# because there is no containing function for find_containing to land in. It has to be a seed.
+#
+# Still NOT here, and for the opposite reason: 0x0C081494, 0x0C0814DE, 0x0C081E56, 0x0C081E76.
+# Those are inside the block this seed starts, so naming them would split it and truncate what
+# encloses them -- the 152 texture decode failures against none measured on 2026-09-13. The
+# runtime resolves that class itself (runtime/src/sh4/abi_bare.cpp, call_indirect).
 # exclude = []            # false positives that break the build or emit nonsense
 
 [hle]
