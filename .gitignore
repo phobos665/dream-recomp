@@ -50,6 +50,9 @@ __pycache__/
 # Owner-supplied third-party trees dropped into the checkout (never committed)
 /Dreamcast Katana SDK*/
 /flycast/
+# KallistiOS, cloned as a reference for how the hardware is actually driven. BSD-licensed, so it
+# is the safe thing to read and describe -- unlike the Katana SDK, which must never be quoted.
+/kallistios/
 
 # KOS test program build products
 tests/kos/**/*.elf

@@ -67,3 +67,33 @@ in.
 With the owner's Crazy Taxi save (Flycast writes one per title as
 `<product-id>_vmu_save_A1.bin`, and Crazy Taxi's product code MK-51035 is in its own IP.BIN) the
 title reads the file and says so on screen: "File loaded from the VMU".
+
+## The card's screen, and what arrives on the wire
+
+The screen is still not modelled, but the format is no longer guesswork. KallistiOS is BSD-licensed
+and is the reference the hard rules point at, so a checkout at `/kallistios/` (gitignored, clone it
+with `git clone --depth 1 https://github.com/KallistiOS/KallistiOS.git kallistios`) settles what the
+frame looks like without going anywhere near Sega's SDK.
+
+A whole screen arrives in **one Block Write**: function word `kLcd`, the block/phase/partition word
+zero, and 48 payload words, so the frame is 50 words long and `nwords - 2` is 48. The payload is
+**192 bytes**, which is 48x32 pixels at one bit each.
+
+The addressing is a flat bit array rather than anything byte-structured: **bit index = y * 48 + x**,
+taken **most-significant bit first** within each byte. So pixel (x, y) is bit `0x80 >> (x % 8)` of
+byte `y * 6 + x / 8`, six bytes to a row and thirty-two rows. A set bit is a lit pixel. That comes
+out of `vmufb_paint_area_strided` and `insert_bits` in
+`kernel/arch/dreamcast/util/vmu_fb.c`, and `vmu_xbm_to_bitmap` in
+`kernel/arch/dreamcast/hardware/maple/vmu.c` arrives at the same layout by a different route, which
+is what makes it trustworthy. `VMU_SCREEN_WIDTH` and `VMU_SCREEN_HEIGHT` are in
+`include/dc/maple/vmu.h`.
+
+One thing is deliberately left open: whether bit zero is the physical top-left or the bottom-right.
+KallistiOS ships `vmu_draw_lcd` and `vmu_draw_lcd_rotated` side by side because a VMU seated in a
+controller is upside down relative to one held on its own, so both orientations occur in the wild.
+Take bit zero as top-left and expect to flip it once, after looking at a real frame from a title
+that draws text; nothing else about the layout is in doubt.
+
+Measured on Crazy Taxi: 917 screen writes in a 150-second run with a card attached. The title drives
+the screen roughly four times harder when no card is present, which is consistent with an animated
+"no memory card" warning, so a run with no writes at all is not the same as a title that never draws.
