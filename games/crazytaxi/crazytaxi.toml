@@ -73,7 +73,13 @@ sweep = true
 # runtime resolves those itself (runtime/src/sh4/abi_bare.cpp, call_indirect). Naming one of those
 # here makes it a discovery seed, which truncates the function containing it and silently corrupts
 # what that function computes.
-extra = [0x0C020000, 0x0C081476]
+extra = [0x0C020000, 0x0C081476, 0x0C161046, 0x0C161050, 0x0C161118, 0x0C16112A]
+# The 0x0C161xxx four are on the memory-card path. They sit inside fn_0c15b0c0, so a *call* through
+# a register reaches them via call_indirect -- but they are reached by non-local *returns*, and
+# resume_at can only re-enter a function at one of its own block starts. These are not block
+# starts, so nothing covers them and the run faults at frame 27, which is exactly what this config
+# recorded before they were dropped. Unlike the 0x0C081xxx group they translate correctly when
+# seeded, so seeding is the right answer for them and the wrong one for those.
 # 0x0C081476 is a real function entry, not a jump into the middle of one: fn_0c081200 ends cleanly
 # at the rts/delay-slot pair 0x0c081472..0x0c081474, and a fresh block starts on the next
 # instruction. Nothing references it statically -- it is only ever reached through a register -- so
@@ -84,7 +90,15 @@ extra = [0x0C020000, 0x0C081476]
 # Those are inside the block this seed starts, so naming them would split it and truncate what
 # encloses them -- the 152 texture decode failures against none measured on 2026-09-13. The
 # runtime resolves that class itself (runtime/src/sh4/abi_bare.cpp, call_indirect).
-# exclude = []            # false positives that break the build or emit nonsense
+# Left to the development interpreter, which runs it correctly, because its translation does not.
+# With a memory card attached the title reaches this function and it computes addresses from
+# floating-point values -- an unmapped read16 of 0x420187ac with r5 = 0x420187a0 and r6 =
+# 0x45bea4d3, both float bit patterns, at frame 6093 -- after which the guest follows garbage and
+# lands on an unimplemented instruction. Excluding this one function and nothing else takes the
+# card path from that fault to 9002 frames with 0 unmapped accesses, which is exactly what a fully
+# interpreted run produces. Remove this line once the emitter defect behind it is found; the
+# oracle in tools/oracle is the way to find it.
+exclude = [0x0C07B760]
 
 [hle]
 # guest address = "runtime handler"; filled in Phase 2/3 (GD-ROM, ADX, VMU library entry points)
