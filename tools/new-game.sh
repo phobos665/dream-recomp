@@ -75,6 +75,15 @@ confirm() {
 script_dir=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$script_dir/.." && pwd)
 [ -f "$root/CMakeLists.txt" ] || die "cannot find the repository root from $script_dir"
+
+# The path came from the user's shell, so it is relative to the directory they typed it in.
+# Everything below runs from $root, so resolve it while it still means what they meant.
+arg_image=${1:-}
+case $arg_image in
+  '' | /*) ;;
+  *) arg_image=$PWD/$arg_image ;;
+esac
+
 cd "$root"
 
 say "${B}dream-recomp: set a title up${R}"
@@ -98,7 +107,7 @@ dcdisc() { "$PY" -m dcdisc "$@"; }
 
 # --- the disc -----------------------------------------------------------------------------------
 
-image=${1:-}
+image=$arg_image
 
 # A folder rather than a file: list what is in it and pick by number. Most people keep their dumps
 # together, and typing one of those filenames exactly is its own small ordeal.
