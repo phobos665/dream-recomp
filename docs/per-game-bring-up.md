@@ -314,7 +314,16 @@ wrong.
 | what actually reached the screen | `--screenshot-presented` |
 | what an address decodes to | `dream-translate disasm` |
 | where functions begin and end | `build/games/<id>/gen/<id>.functions.json` |
-| whether translated and interpreted agree | `--replay` -- **see the warning below** |
+| where the guest is spending its time | `--sample N --sample-file FILE` -- a CPU sampler, one line per N cycles: `cycles pc r15 r10 sr pr` |
+| whether translated and interpreted agree | `--replay` -- **see the warnings below** |
+
+**`--replay` can suppress the fault you are chasing.** Measured on a title whose driven run faults
+with 79,615,125 unmapped accesses: the same run under `--replay` reported 2, and stopped somewhere
+else entirely. Two reasons, and both matter. `--replay-hooks` changes the emitted code, so a
+timing- or state-sensitive fault may simply not occur. And replay skips whole classes of call:
+in that run, 3,481,948 of its 3,483,322 skips were **device writes**, which is exactly what a
+corrupt-pointer bug ends up doing. A disagreement it reports is real; **silence from it is not
+evidence**, and neither is a clean run under it.
 
 **`--replay` reports success on a build with no hooks in it.** The emitter only plants them when the
 translator runs with `--replay-hooks`, which is not the default. On an ordinary build it prints
