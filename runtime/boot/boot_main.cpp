@@ -1371,6 +1371,12 @@ int main(int argc, char** argv) {
         std::memcpy(sys.memory.flash(), raw.data(), raw.size());
         std::printf("flash: loaded %s\n", flash_image.c_str());
     }
+    // The console's locale, before setup_boot() installs and may synthesise a flash. The disc's
+    // region is the only evidence here of which console the title was sold for, and a title that
+    // reads the factory partition should not be told it is running on a Japanese machine because
+    // that happened to be the hardcoded default.
+    const auto region = dream::hle::region_from_name(cfg.region);
+    bios.set_locale(dream::hle::Language::English, region, dream::hle::broadcast_for(region));
     sys.install();
     bios.setup_boot(cfg.entry);
     const std::vector<std::uint8_t> ipbin(sys.memory.ram() + 0x8000, sys.memory.ram() + 0x10000);

@@ -59,6 +59,14 @@ void Flash::erase_partition(unsigned part) {
         std::memset(data_ + off, 0xFF, size);
 }
 
+Region region_from_name(std::string_view name) noexcept {
+    if (name == "Japan")
+        return Region::Japan;
+    if (name == "Europe")
+        return Region::Europe;
+    return Region::Usa;
+}
+
 void Flash::format(Language lang, Region region, Broadcast broadcast, const char* sysinfo) {
     std::memset(data_, 0xFF, kSize);
     // Factory partition: the system string twice, as the BIOS validates it. Both copies carry the

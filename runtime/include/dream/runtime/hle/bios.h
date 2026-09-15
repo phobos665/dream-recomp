@@ -39,8 +39,18 @@ public:
     ~Bios();
 
     void attach_disc(gdrom::Disc* disc) noexcept { disc_ = disc; }
+    // The console's own locale, used when a flash has to be synthesised. Call before setup_boot(),
+    // which installs. Defaults to English/USA/NTSC: the region belongs to the console rather than
+    // the disc, but a disc is the only evidence available here of which console it was sold for,
+    // so the launcher passes the [game] region through.
+    void set_locale(Language lang, Region region, Broadcast broadcast) noexcept {
+        lang_ = lang;
+        region_ = region;
+        broadcast_ = broadcast;
+    }
+
     // Formats the flash (if unformatted) and writes the vector table and handlers.
-    void install(Language lang = Language::English);
+    void install();
     // Registers and memory as after the real BIOS handed over to 1ST_READ.BIN at boot_addr; loads
     // IP.BIN from the disc's high-density area to 0x8C008000 when a disc is attached.
     void setup_boot(std::uint32_t boot_addr);
@@ -59,6 +69,10 @@ public:
     Flash& flash() noexcept { return flash_; }
 
 private:
+    Language lang_ = Language::English;
+    Region region_ = Region::Usa;
+    Broadcast broadcast_ = Broadcast::Ntsc;
+
     struct Gd {
         std::int32_t status = GDC_OK;
         std::uint32_t command = 0;

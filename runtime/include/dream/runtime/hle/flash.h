@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace dream::hle {
 
@@ -13,6 +14,15 @@ enum class Language : std::uint8_t { Japanese = 0, English, German, French, Span
 // is the console's, not ours: Flycast writes '0' + the value at the offsets stamped in format().
 enum class Region : std::uint8_t { Japan = 0, Usa, Europe };
 enum class Broadcast : std::uint8_t { Ntsc = 0, Pal, PalM, PalN };
+
+// Maps the [game] region string to the console setting. dcdisc writes the IP.BIN area symbol in
+// full ("Japan", "USA", "Europe"; ipbin.py), so those are the names to expect; anything else,
+// including an absent field, falls back to USA rather than guessing.
+Region region_from_name(std::string_view name) noexcept;
+// Europe shipped PAL, everywhere else NTSC. Only a default: a title that cares reads the flash.
+constexpr Broadcast broadcast_for(Region r) noexcept {
+    return r == Region::Europe ? Broadcast::Pal : Broadcast::Ntsc;
+}
 
 class Flash {
 public:
