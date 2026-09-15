@@ -1783,7 +1783,7 @@ int main(int argc, char** argv) {
     // Optional register sampler: every N cycles record pc (last call site), r15, r0, sr.
     struct Sample {
         std::uint64_t cycles;
-        std::uint32_t pc, r15, r0, sr, pr;
+        std::uint32_t pc, r15, r10, sr, pr;
     };
     std::vector<Sample> samples;
     int sampler = -1;
@@ -2120,7 +2120,7 @@ int main(int argc, char** argv) {
         for (const auto& smp : samples) {
             char line[128];
             std::snprintf(line, sizeof line, "%llu %08x %08x %08x %08x %08x\n",
-                          static_cast<unsigned long long>(smp.cycles), smp.pc, smp.r15, smp.r0,
+                          static_cast<unsigned long long>(smp.cycles), smp.pc, smp.r15, smp.r10,
                           smp.sr, smp.pr);
             o << line;
         }
@@ -2128,14 +2128,14 @@ int main(int argc, char** argv) {
     if (!samples.empty() && sample_file.empty()) {
         std::printf("samples (first 40):\n");
         for (std::size_t i = 0; i < std::min<std::size_t>(samples.size(), 40); ++i)
-            std::printf("  %12llu pc %08x r15 %08x r0 %08x sr %08x pr %08x\n",
+            std::printf("  %12llu pc %08x r15 %08x r10 %08x sr %08x pr %08x\n",
                         static_cast<unsigned long long>(samples[i].cycles), samples[i].pc,
-                        samples[i].r15, samples[i].r0, samples[i].sr, samples[i].pr);
+                        samples[i].r15, samples[i].r10, samples[i].sr, samples[i].pr);
         std::printf("samples (last %zu):\n", std::min<std::size_t>(samples.size(), 24));
         for (std::size_t i = samples.size() > 24 ? samples.size() - 24 : 0; i < samples.size(); ++i)
-            std::printf("  %12llu pc %08x r15 %08x r0 %08x sr %08x pr %08x\n",
+            std::printf("  %12llu pc %08x r15 %08x r10 %08x sr %08x pr %08x\n",
                         static_cast<unsigned long long>(samples[i].cycles), samples[i].pc,
-                        samples[i].r15, samples[i].r0, samples[i].sr, samples[i].pr);
+                        samples[i].r15, samples[i].r10, samples[i].sr, samples[i].pr);
     }
     if (!report.empty()) {
         std::ofstream o(report);
