@@ -16,7 +16,16 @@
 #include <execinfo.h>
 #endif
 #include <ctime>
+#include <filesystem>
 #include <fstream>
+#include <system_error>
+#include <thread>
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 #include <iterator>
 #include <string>
 #include <unordered_map>
@@ -1090,6 +1099,9 @@ void usage(const char* argv0, std::FILE* out) {
         "\n"
         "Reporting what happened:\n"
         "  --report FILE          write the end-of-run report to a file as well as stdout\n"
+        "  --log [FILE]           mirror the whole session to a file as it runs, fault included;\n"
+        "                         on by default, one file per run under the host's log directory\n"
+        "  --no-log               do not write a session log\n"
         "  --suggest-config FILE  write the TOML this run earned: the call targets discovery\n"
         "                         never reached, and the regions the program copied and ran\n"
         "                         elsewhere. Paste into the game's config and rebuild.\n"
@@ -1120,6 +1132,129 @@ void usage(const char* argv0, std::FILE* out) {
         "  --validation           turn on Vulkan validation layers\n"
         "  --framebuffer-writeback  write rendered frames back into video memory\n",
         argv0);
+}
+
+// --log FILE: mirror everything this process prints, as it prints it.
+//
+// The launcher reports through printf and fprintf(stderr) from a few hundred places, and the line
+// that matters most -- the fault -- is written just before the process gives up. Routing every one
+// of those call sites through a helper would be a large and error-prone edit, so this replaces file
+// descriptors 1 and 2 with a pipe and pumps whatever arrives to both the real terminal and the log.
+// Everything is captured, including output from libraries that write to the descriptors directly,
+// and the ordering the user saw on screen is the ordering in the file.
+//
+// The pump thread writes the file unbuffered, so a run killed from outside still leaves a complete
+// log up to the last line printed. Stopping restores the original descriptors first, so anything
+// printed after teardown still reaches the terminal.
+class RunLog {
+public:
+    bool start(const std::string& path) {
+        file_ = std::fopen(path.c_str(), "w");
+        if (!file_) {
+            std::fprintf(stderr, "--log %s: cannot open for writing\n", path.c_str());
+            return false;
+        }
+        std::setvbuf(file_, nullptr, _IONBF, 0);
+        int fds[2];
+#if defined(_WIN32)
+        if (_pipe(fds, 1 << 16, _O_BINARY) != 0)
+            return fail();
+#else
+        if (::pipe(fds) != 0)
+            return fail();
+#endif
+        read_fd_ = fds[0];
+        saved_out_ = dup(1);
+        saved_err_ = dup(2);
+        if (saved_out_ < 0 || saved_err_ < 0)
+            return fail();
+        // Unbuffered, or a crash loses whatever is still sitting in stdio's buffer.
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
+        std::setvbuf(stderr, nullptr, _IONBF, 0);
+        dup2(fds[1], 1);
+        dup2(fds[1], 2);
+        close(fds[1]);
+        pump_ = std::thread([this] {
+            char buf[4096];
+            for (;;) {
+                const auto n = read(read_fd_, buf, sizeof buf);
+                if (n <= 0)
+                    break;
+                write(saved_out_, buf, static_cast<std::size_t>(n));
+                std::fwrite(buf, 1, static_cast<std::size_t>(n), file_);
+            }
+        });
+        running_ = true;
+        return true;
+    }
+
+    void stop() {
+        if (!running_)
+            return;
+        running_ = false;
+        std::fflush(stdout);
+        std::fflush(stderr);
+        // Put the real descriptors back before closing the pipe, so the pump sees end-of-file and
+        // anything printed during shutdown still goes to the terminal.
+        dup2(saved_out_, 1);
+        dup2(saved_err_, 2);
+        close(saved_out_);
+        close(saved_err_);
+        if (pump_.joinable())
+            pump_.join();
+        close(read_fd_);
+        std::fclose(file_);
+        file_ = nullptr;
+    }
+
+    ~RunLog() { stop(); }
+
+private:
+    bool fail() {
+        if (file_)
+            std::fclose(file_);
+        file_ = nullptr;
+        return false;
+    }
+    std::FILE* file_ = nullptr;
+    std::thread pump_;
+    int read_fd_ = -1, saved_out_ = -1, saved_err_ = -1;
+    bool running_ = false;
+};
+
+// Where a log goes when --log is given no path, and when a windowed run does not mention it at all.
+// One file per run, named for the title and the wall clock, because the interesting question after
+// a session is usually "what did the run that just broke do", and a single overwritten file answers
+// it only until the next launch.
+std::string default_log_path(const std::string& game_id) {
+    const char* home = std::getenv("HOME");
+#if defined(_WIN32)
+    const char* base = std::getenv("APPDATA");
+    std::string dir = base ? std::string(base) + "\\dream-recomp\\logs\\" : std::string();
+#elif defined(__APPLE__)
+    std::string dir = home ? std::string(home) + "/Library/Logs/dream-recomp/" : std::string();
+#else
+    const char* xdg = std::getenv("XDG_STATE_HOME");
+    std::string dir =
+        xdg ? std::string(xdg) + "/dream-recomp/"
+            : (home ? std::string(home) + "/.local/state/dream-recomp/" : std::string());
+#endif
+    if (dir.empty())
+        return {};
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec)
+        return {};
+    const std::time_t now = std::time(nullptr);
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &now);
+#else
+    localtime_r(&now, &tm);
+#endif
+    char stamp[32];
+    std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
+    return dir + (game_id.empty() ? "run" : game_id) + "-" + stamp + ".log";
 }
 
 int main(int argc, char** argv) {
@@ -1205,11 +1340,23 @@ int main(int argc, char** argv) {
     // functions, because comparing every call is slow.
     bool replay_all = false, replay_self_check = false;
     std::string replay_only;
+    // Logging is on unless refused. A windowed session scrolls its terminal away, and a run that
+    // dies takes the fault line with it -- which is the one line worth having. A log costs a file.
+    std::string log_path;
+    bool want_log = true;
+    RunLog run_log;
+
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--config") && i + 1 < argc)
             config = argv[++i];
         else if (!std::strcmp(argv[i], "--report") && i + 1 < argc)
             report = argv[++i];
+        // --log takes an optional path: bare --log means "log, you choose where".
+        else if (!std::strcmp(argv[i], "--log")) {
+            log_path = (i + 1 < argc && argv[i + 1][0] != '-') ? argv[++i] : std::string();
+            want_log = true;
+        } else if (!std::strcmp(argv[i], "--no-log"))
+            want_log = false;
         else if (!std::strcmp(argv[i], "--stop-on-ta"))
             stop_on_ta = true;
         else if (!std::strcmp(argv[i], "--max-frames") && i + 1 < argc)
@@ -1317,6 +1464,17 @@ int main(int argc, char** argv) {
     if (config.empty()) {
         std::fprintf(stderr, "--config is required\n");
         return 2;
+    }
+    // Start before anything else prints, so the log is the whole session and not the tail of it.
+    // The title's id comes from the config's filename rather than the parsed TOML, which has not
+    // been read yet; getting it wrong only affects what the file is called.
+    if (want_log) {
+        if (log_path.empty()) {
+            std::string stem = std::filesystem::path(config).stem().string();
+            log_path = default_log_path(stem);
+        }
+        if (!log_path.empty() && run_log.start(log_path))
+            std::printf("log: %s\n", log_path.c_str());
     }
     if (scale < 1 || scale > 4) {
         std::fprintf(stderr, "--scale must be 1 to 4\n");
