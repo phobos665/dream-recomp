@@ -98,7 +98,7 @@ Bios::~Bios() {
         g_bios = nullptr;
 }
 
-void Bios::install(Language lang) {
+void Bios::install() {
     g_bios = this;
     static bool registered = false;
     if (!registered) {
@@ -106,7 +106,7 @@ void Bios::install(Language lang) {
         registered = true;
     }
     if (std::memcmp(sys_.memory.flash() + 0x1A005, "Dreamcast  ", 11) != 0)
-        flash_.format(lang);
+        flash_.format(lang_, region_, broadcast_);
     auto& m = sys_.memory;
     m.write32(kVecSystem, kHookSystem);
     m.write32(kVecFont, kHookFont);

@@ -15,6 +15,56 @@ namespace {
 const char* kFixture = DREAM_DCDISC_FIXTURES "/synthetic.chd";
 }
 
+TEST_CASE("flash: the factory partition records region, language and broadcast in both copies") {
+    // Pinned against Flycast's fixUpDCFlash() (core/hw/flashrom/nvmem.cpp), which writes
+    // '0' + the setting at 0x1a002/3/4 and again at 0x1a0a2/3/4. This existed as a defect for a
+    // while: format() wrote "00000Dreamcast  " unconditionally, claiming a Japanese console set to
+    // Japanese, for USA discs. The offsets are the console's, not ours, so they are asserted
+    // literally rather than through a helper that could drift with them.
+    System sys;
+    hle::Flash flash(sys.memory.flash());
+    const std::uint8_t* f = sys.memory.flash();
+
+    flash.format(hle::Language::English, hle::Region::Usa, hle::Broadcast::Ntsc);
+    for (std::uint32_t base : {0x1A000u, 0x1A0A0u}) {
+        CHECK(std::memcmp(f + base, "00110Dreamcast  ", 16) == 0);
+    }
+
+    flash.format(hle::Language::Japanese, hle::Region::Japan, hle::Broadcast::Ntsc);
+    for (std::uint32_t base : {0x1A000u, 0x1A0A0u}) {
+        CHECK(std::memcmp(f + base, "00000Dreamcast  ", 16) == 0);
+    }
+
+    flash.format(hle::Language::German, hle::Region::Europe, hle::Broadcast::Pal);
+    for (std::uint32_t base : {0x1A000u, 0x1A0A0u}) {
+        CHECK(std::memcmp(f + base, "00221Dreamcast  ", 16) == 0);
+    }
+}
+
+TEST_CASE("flash: an unwritten partition reads as erased, not as zeros") {
+    // Flash erases to all-ones, and the usual way a title asks whether a block was ever written is
+    // to test it for 0xFF. format() used to zero the Reserved partition, so that test failed and
+    // the title concluded the partition held real data.
+    System sys;
+    hle::Flash flash(sys.memory.flash());
+    flash.format(hle::Language::English, hle::Region::Usa, hle::Broadcast::Ntsc);
+    std::uint32_t off = 0, size = 0;
+    REQUIRE(hle::Flash::partition(hle::Flash::Reserved, off, size));
+    const std::uint8_t* f = sys.memory.flash();
+    for (std::uint32_t i = 0; i < size; ++i) REQUIRE(f[off + i] == 0xFF);
+}
+
+TEST_CASE("flash: region names map as dcdisc writes them, and anything else falls back to USA") {
+    // dcdisc writes the IP.BIN area symbol in full (tools/dcdisc/dcdisc/ipbin.py).
+    CHECK(hle::region_from_name("Japan") == hle::Region::Japan);
+    CHECK(hle::region_from_name("USA") == hle::Region::Usa);
+    CHECK(hle::region_from_name("Europe") == hle::Region::Europe);
+    CHECK(hle::region_from_name("") == hle::Region::Usa);
+    CHECK(hle::region_from_name("Brazil") == hle::Region::Usa);
+    CHECK(hle::broadcast_for(hle::Region::Europe) == hle::Broadcast::Pal);
+    CHECK(hle::broadcast_for(hle::Region::Usa) == hle::Broadcast::Ntsc);
+}
+
 TEST_CASE("flash: formatted layout has partitions, a valid header and the system settings block") {
     System sys;
     hle::Flash flash(sys.memory.flash());

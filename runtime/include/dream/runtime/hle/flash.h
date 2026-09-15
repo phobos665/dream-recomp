@@ -5,10 +5,24 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace dream::hle {
 
 enum class Language : std::uint8_t { Japanese = 0, English, German, French, Spanish, Italian };
+// The console's own region and video standard, as the factory partition records them. The numbering
+// is the console's, not ours: Flycast writes '0' + the value at the offsets stamped in format().
+enum class Region : std::uint8_t { Japan = 0, Usa, Europe };
+enum class Broadcast : std::uint8_t { Ntsc = 0, Pal, PalM, PalN };
+
+// Maps the [game] region string to the console setting. dcdisc writes the IP.BIN area symbol in
+// full ("Japan", "USA", "Europe"; ipbin.py), so those are the names to expect; anything else,
+// including an absent field, falls back to USA rather than guessing.
+Region region_from_name(std::string_view name) noexcept;
+// Europe shipped PAL, everywhere else NTSC. Only a default: a title that cares reads the flash.
+constexpr Broadcast broadcast_for(Region r) noexcept {
+    return r == Region::Europe ? Broadcast::Pal : Broadcast::Ntsc;
+}
 
 class Flash {
 public:
@@ -23,9 +37,17 @@ public:
     static bool partition(unsigned id, std::uint32_t& offset, std::uint32_t& size) noexcept;
 
     // Erases everything, writes the factory strings and formats the block partitions, then stores a
-    // system-configuration block with the given language. `sysinfo` is the 16-byte factory string
-    // (Flycast's default "00000Dreamcast  ").
-    void format(Language lang, const char* sysinfo = "00000Dreamcast  ");
+    // system-configuration block with the given language.
+    //
+    // Region defaults to USA because every disc this has been run against is a USA release and a
+    // Japanese default is simply wrong for them; pass the disc's own region when it is known. The
+    // previous default claimed a Japanese console set to Japanese, and its comment attributed that
+    // to Flycast, which was wrong in both halves: Flycast's own generated flash reads "00110".
+    //
+    // `sysinfo` is the 16-byte factory string. Its region, language and broadcast digits are
+    // overwritten from the arguments, so callers need not encode them by hand.
+    void format(Language lang, Region region = Region::Usa, Broadcast broadcast = Broadcast::Ntsc,
+                const char* sysinfo = "00000Dreamcast  ");
 
     // Block-allocated partitions: logical block id -> 60 bytes of payload (crc handled here).
     bool read_block(unsigned part, std::uint32_t block_id, std::uint8_t out60[60]) const;
