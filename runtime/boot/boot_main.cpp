@@ -1064,6 +1064,7 @@ void usage(const char* argv0, std::FILE* out) {
         "                         by every title. F1 (or a pad's select button) opens the screen\n"
         "                         that edits them, and writes them back here.\n"
         "  --vmu FILE             a 128 KB memory-card image; writes are saved back to it.\n"
+        "  --flash FILE           a 128 KB console flash image; without it one is synthesised\n"
         "                         Created, blank and formatted, if the path does not exist. A "
         "file\n"
         "                         that is not a card is refused, never overwritten.\n"
@@ -1147,6 +1148,13 @@ int main(int argc, char** argv) {
     // the host's per-user settings directory, so one layout follows the player across every title.
     std::string bindings_file;
     bool bindings_file_set = false;
+    std::string flash_dump;           // --dump-flash FILE: write the flash out at the stop, so a
+                                      // synthesised one can be compared against a reference.
+    std::string flash_image;          // --flash FILE: a 128 KB console flash image. The runtime
+                                      // synthesises one when this is absent, which is enough for
+                                      // some titles and not others: a title that reads the user's
+                                      // settings out of the flash user partition may refuse to
+                                      // start on a synthetic one.
     std::string vmu;                  // --vmu FILE: a 128 KB memory-card image in the standard
                                       // layout, as any Dreamcast tool or emulator writes. Writes
                                       // go back to the file. Never committed: owner data.
@@ -1242,6 +1250,10 @@ int main(int argc, char** argv) {
         } else if (!std::strcmp(argv[i], "--bindings") && i + 1 < argc) {
             bindings_file = argv[++i];
             bindings_file_set = true;
+        } else if (!std::strcmp(argv[i], "--flash") && i + 1 < argc) {
+            flash_image = argv[++i];
+        } else if (!std::strcmp(argv[i], "--dump-flash") && i + 1 < argc) {
+            flash_dump = argv[++i];
         } else if (!std::strcmp(argv[i], "--vmu") && i + 1 < argc)
             vmu = argv[++i];
         else if (!std::strcmp(argv[i], "--dump-ta-frame") && i + 1 < argc)
@@ -1345,6 +1357,20 @@ int main(int argc, char** argv) {
     dream::System sys;
     dream::hle::Bios bios(sys);
     bios.attach_disc(disc.get());
+    // Load the flash before setup_boot: Bios::install() formats a synthetic one only when the
+    // factory string is not already present, so an image loaded here is used as it stands.
+    if (!flash_image.empty()) {
+        std::ifstream f(flash_image, std::ios::binary);
+        std::vector<char> raw((std::istreambuf_iterator<char>(f)),
+                              std::istreambuf_iterator<char>());
+        if (raw.size() != dream::hle::Flash::kSize) {
+            std::fprintf(stderr, "--flash %s: expected %u bytes, got %zu\n", flash_image.c_str(),
+                         dream::hle::Flash::kSize, raw.size());
+            return 2;
+        }
+        std::memcpy(sys.memory.flash(), raw.data(), raw.size());
+        std::printf("flash: loaded %s\n", flash_image.c_str());
+    }
     sys.install();
     bios.setup_boot(cfg.entry);
     const std::vector<std::uint8_t> ipbin(sys.memory.ram() + 0x8000, sys.memory.ram() + 0x10000);
@@ -2098,6 +2124,10 @@ int main(int argc, char** argv) {
                 "as TOML):\n%s",
                 entries.c_str());
         }
+    }
+    if (!flash_dump.empty()) {
+        std::ofstream o(flash_dump, std::ios::binary);
+        o.write(reinterpret_cast<const char*>(sys.memory.flash()), dream::hle::Flash::kSize);
     }
     if (!dump.empty()) {  // --dump ADDR:LEN: hex dump of guest memory at stop
         const auto colon = dump.find(':');
