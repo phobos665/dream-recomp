@@ -37,6 +37,7 @@ public:
 
     std::function<void()> on_soft_reset;  // SB_SFRES written with the reset key
     // Counters
+    std::uint64_t ch2_yuv_transfers = 0;
     std::uint64_t ch2_transfers = 0, ch2_ta_bytes = 0, ch2_texture_bytes = 0, ch2_errors = 0,
                   sort_dma_starts = 0;
     // The registers at the first and the last refused start, for the launcher report.

@@ -108,6 +108,15 @@ void SysBlock::ch2_dma() {
             pvr_.write_burst(pvr::Core::kFifoBase + dst, words);
         }
         ch2_ta_bytes += len;
+        // The YUV converter has its own end-of-transfer interrupt, separate from the channel-2 one
+        // below: hardware raises it when the converter has consumed the macroblocks it was told to
+        // expect. Kamui's YUV texture loader waits on exactly this and retires nothing without it.
+        // Raised on transfer completion here, which is as accurate as the converter itself is until
+        // it actually converts (WP2.3).
+        if (dst & (pvr::Core::kYuvBase - pvr::Core::kFifoBase)) {
+            ++ch2_yuv_transfers;
+            holly_.raise(Irq::YuvDma);
+        }
     } else {
         // Texture path: the 64-bit or the 32-bit VRAM view, chosen by LMMODE0/1 for the two
         // texture-area mirrors; the destination register advances past the data.
