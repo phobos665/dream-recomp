@@ -1890,7 +1890,23 @@ int main(int argc, char** argv) {
             iopt.native_hi = dream::hle::Bios::kHookGd2 + 2;
             sys.interpret_all = true;
             sys.ctx.pc = cfg.entry;
-            dream::devinterp::run(sys.ctx, sys.memory, 0, iopt, nullptr);
+            // A cooperative task switch abandons the guest context it was running in: rte()
+            // throws NonLocalReturn past every host frame between there and here. run_guest()
+            // drives that loop for translated code, and this path does not go through it, so
+            // until now the first task switch under --interpret reached terminate -- and the
+            // handler below could not have caught it either, NonLocalReturn being a plain struct
+            // rather than a std::exception. Resuming an interpreted context needs nothing more
+            // than interpreting from the new PC; there is no entry point to re-enter.
+            for (;;) {
+                try {
+                    dream::devinterp::run(sys.ctx, sys.memory, 0, iopt, nullptr);
+                    break;
+                } catch (const dream::sh4::NonLocalReturn& n) {
+                    if (n.pc == 0)
+                        break;  // the return_to this run was started with
+                    sys.ctx.pc = n.pc;
+                }
+            }
         } else
 #endif
         {
