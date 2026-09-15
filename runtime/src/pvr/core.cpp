@@ -239,7 +239,7 @@ void Core::yuv_word(std::uint32_t value) {
 
 void Core::yuv_macroblock() {
     const std::uint32_t ctrl = regs_[kTaYuvTexCtrl >> 2];
-    const std::uint32_t mbs_x = (ctrl & 0x3Fu) + 1;   // texture width in macroblocks
+    const std::uint32_t mbs_x = (ctrl & 0x3Fu) + 1;  // texture width in macroblocks
     const std::uint32_t mbs_y = ((ctrl >> 8) & 0x3Fu) + 1;
     const std::uint32_t base = regs_[kTaYuvTexBase >> 2] & 0x00FFFFF8u;
     const std::uint32_t pitch = mbs_x * 16 * 2;  // bytes per output row
