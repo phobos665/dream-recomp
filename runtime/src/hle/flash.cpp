@@ -59,12 +59,22 @@ void Flash::erase_partition(unsigned part) {
         std::memset(data_ + off, 0xFF, size);
 }
 
-void Flash::format(Language lang, const char* sysinfo) {
+void Flash::format(Language lang, Region region, Broadcast broadcast, const char* sysinfo) {
     std::memset(data_, 0xFF, kSize);
-    // Factory partition: the system string twice, as the BIOS validates it.
-    std::memcpy(data_ + 0x1A000, sysinfo, 16);
-    std::memcpy(data_ + 0x1A0A0, sysinfo, 16);
-    std::memset(data_ + 0x18000, 0, 0x2000);  // reserved partition reads as zeros
+    // Factory partition: the system string twice, as the BIOS validates it. Both copies carry the
+    // region, language and broadcast digits, and a title may read either, so both are stamped.
+    // Offsets and encoding follow Flycast's fixUpDCFlash() (core/hw/flashrom/nvmem.cpp), which
+    // writes '0' + the value at 0x1a002/3/4 and again at 0x1a0a2/3/4.
+    for (std::uint32_t base : {0x1A000u, 0x1A0A0u}) {
+        std::memcpy(data_ + base, sysinfo, 16);
+        data_[base + 2] = static_cast<std::uint8_t>('0' + static_cast<unsigned>(region));
+        data_[base + 3] = static_cast<std::uint8_t>('0' + static_cast<unsigned>(lang));
+        data_[base + 4] = static_cast<std::uint8_t>('0' + static_cast<unsigned>(broadcast));
+    }
+    // The Reserved partition is left erased. It used to be zeroed here, with a comment claiming it
+    // "reads as zeros"; that is not how flash behaves. An erased device reads all-ones, and the
+    // usual way a title asks whether a block was ever written is to test it for 0xFF -- which a
+    // zero-filled partition fails, so the title concludes it holds real data.
     for (unsigned part : {User, Game, Unknown}) {
         std::uint32_t off = 0, size = 0;
         partition(part, off, size);
