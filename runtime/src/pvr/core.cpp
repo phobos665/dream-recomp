@@ -220,14 +220,65 @@ void Core::write_burst(std::uint32_t addr, const std::uint32_t* words) {
     for (unsigned i = 0; i < 8; ++i) write(addr + 4 * i, words[i], 4);
 }
 
+// The converter takes 4:2:0 macroblocks as a byte stream: 64 bytes of U (8x8), then 64 of V, then
+// 256 of Y as four 8x8 blocks in the order top-left, top-right, bottom-left, bottom-right. Each
+// macroblock covers 16x16 pixels and becomes 4:2:2 texels, two pixels to a 32-bit word, written at
+// TA_YUV_TEX_BASE into the 64-bit view of texture memory as the texture path above does.
+void Core::yuv_word(std::uint32_t value) {
+    ++yuv_words;
+    for (unsigned b = 0; b < 4; ++b) {
+        if (yuv_fill_ >= yuv_mb_.size())
+            break;
+        yuv_mb_[yuv_fill_++] = static_cast<std::uint8_t>(value >> (8 * b));
+    }
+    if (yuv_fill_ < yuv_mb_.size())
+        return;
+    yuv_fill_ = 0;
+    yuv_macroblock();
+}
+
+void Core::yuv_macroblock() {
+    const std::uint32_t ctrl = regs_[kTaYuvTexCtrl >> 2];
+    const std::uint32_t mbs_x = (ctrl & 0x3Fu) + 1;   // texture width in macroblocks
+    const std::uint32_t mbs_y = ((ctrl >> 8) & 0x3Fu) + 1;
+    const std::uint32_t base = regs_[kTaYuvTexBase >> 2] & 0x00FFFFF8u;
+    const std::uint32_t pitch = mbs_x * 16 * 2;  // bytes per output row
+    const std::uint32_t mbx = yuv_index_ % mbs_x;
+    const std::uint32_t mby = (yuv_index_ / mbs_x) % mbs_y;
+
+    const std::uint8_t* u = yuv_mb_.data();
+    const std::uint8_t* v = u + 64;
+    const std::uint8_t* y = v + 64;
+    // Y sample at (x, row) within the macroblock, picking the right 8x8 block.
+    const auto luma = [y](unsigned x, unsigned row) -> std::uint32_t {
+        const unsigned block = (row >= 8 ? 2u : 0u) + (x >= 8 ? 1u : 0u);
+        return y[block * 64 + (row & 7u) * 8 + (x & 7u)];
+    };
+
+    for (unsigned row = 0; row < 16; ++row) {
+        for (unsigned x = 0; x < 16; x += 2) {
+            const unsigned c = (row >> 1) * 8 + (x >> 1);  // chroma is half resolution both ways
+            const std::uint32_t word = static_cast<std::uint32_t>(u[c]) | (luma(x, row) << 8) |
+                                       (static_cast<std::uint32_t>(v[c]) << 16) |
+                                       (luma(x + 1, row) << 24);
+            const std::uint32_t off = base + (mby * 16 + row) * pitch + (mbx * 16 + x) * 2;
+            memory_.write32(0x04000000u | (off & 0x00FFFFFCu), word);
+            ++texture_words;
+        }
+    }
+
+    if (++yuv_index_ >= mbs_x * mbs_y)
+        yuv_index_ = 0;  // the guest reprograms base/ctrl per frame; wrap rather than run off
+    regs_[kTaYuvTexCnt >> 2] = yuv_index_;
+}
+
 void Core::write(std::uint32_t addr, std::uint32_t value, unsigned size) {
     if (addr >= kFifoBase && addr < kYuvBase) {
         fifo_word(addr, value);
         return;
     }
-    if (addr >= kYuvBase &&
-        addr < kTexBase) {  // YUV converter input: counted only (WP2.3 renderer)
-        ++yuv_words;
+    if (addr >= kYuvBase && addr < kTexBase) {  // YUV converter input
+        yuv_word(value);
         return;
     }
     if (addr >= kTexBase && addr < kFifoEnd) {  // texture path: lands in the 64-bit VRAM view
@@ -247,6 +298,15 @@ void Core::write(std::uint32_t addr, std::uint32_t value, unsigned size) {
         case kRevision:
         case kTaYuvTexCnt:
             return;  // read-only
+        case kTaYuvTexBase:
+        case kTaYuvTexCtrl:
+            // A new destination or geometry starts a new texture: drop any partial macroblock and
+            // begin again at the top left, as the hardware does when the guest reprograms these.
+            regs_[off >> 2] = value;
+            yuv_fill_ = 0;
+            yuv_index_ = 0;
+            regs_[kTaYuvTexCnt >> 2] = 0;
+            return;
         case kStartRender:
             start_render();
             return;

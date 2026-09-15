@@ -103,6 +103,15 @@ public:
 private:
     void start_render();
     void fifo_word(std::uint32_t addr, std::uint32_t value);
+    // YUV converter (WP2.3): the guest streams 4:2:0 macroblocks into the converter FIFO and the
+    // hardware writes 4:2:2 texels into texture memory at TA_YUV_TEX_BASE. Sofdec video arrives
+    // this way, so a title playing an FMV draws nothing at all without it.
+    void yuv_word(std::uint32_t value);
+    void yuv_macroblock();
+
+    std::array<std::uint8_t, 384> yuv_mb_{};  // 64 U + 64 V + 256 Y, in arrival order
+    std::uint32_t yuv_fill_ = 0;              // bytes of the current macroblock collected
+    std::uint32_t yuv_index_ = 0;             // macroblock position within the texture
 
     sched::Scheduler& sched_;
     holly::Intc& holly_;
