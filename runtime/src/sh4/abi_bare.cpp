@@ -246,12 +246,25 @@ void resume_at(Ctx& c, ::dream::Memory& m, std::uint32_t pc) {
     const std::uint32_t phys = pc & 0x1FFFFFFFu;
     if (!interpreted(phys)) {
         if (const FunctionEntry* e = find_containing(pc, &m)) {
-            if (e->address == phys) {
-                e->fn(c, m);
-                return;
-            }
+            // Resume, always, when the function can be resumed -- including when pc happens to be
+            // the entry address. This is a *continuation*, not a call, and the two differ in more
+            // than where execution starts: entering through fn() passes resume_pc 0, which arms the
+            // non-local-return check with entry_pr set to whatever PR holds right now. For a
+            // continuation that PR belongs to some earlier frame, so the function's own rts then
+            // looks non-local, throws, and comes back here -- and if the address it returns to is
+            // itself a listed entry, the same thing happens again. Crazy Taxi's fn_0c07b630 was
+            // restarted from its top in exactly that loop, with the previous function's registers
+            // still live, until it walked a mask result as a pointer array and faulted.
+            //
+            // Discovery makes this easy to hit: 107 pairs of entries in that title are 4 bytes
+            // apart, and 0x0C160F58 through 0x0C160F68 are five overlapping entries into one body,
+            // all found through pointers. Any return address landing on one of those was a restart.
             if (e->resume) {
                 e->resume(c, m, pc);
+                return;
+            }
+            if (e->address == phys) {
+                e->fn(c, m);
                 return;
             }
         }
