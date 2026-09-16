@@ -2515,6 +2515,12 @@ int main(int argc, char** argv) {
     (void)replay_all;
     (void)replay_self_check;
     (void)replay_only;
+    // The capture hooks live in the dev interpreter, so a release build parses these flags and does
+    // nothing with them rather than rejecting a command line that works everywhere else.
+    (void)capture_entry;
+    (void)capture_out;
+    (void)capture_count;
+    (void)capture_if_bad;
 #endif
     dream::sh4::GuestFn entry = dream::sh4::find_function(cfg.entry);
     if (!entry) {
