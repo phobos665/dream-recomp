@@ -9,6 +9,11 @@
 #include <string>
 #include <vector>
 
+namespace dream::state {
+class Writer;
+class Reader;
+}  // namespace dream::state
+
 namespace dream::sched {
 
 constexpr std::uint64_t kSh4Clock = 200'000'000;
@@ -37,6 +42,9 @@ public:
     // then leaves now() == target.
     void advance_to(std::uint64_t target);
     void advance(std::uint64_t cycles) { advance_to(now_ + cycles); }
+    // Save states (state/state.h): this device's registers and internal state.
+    void save_state(state::Writer& w);
+    void load_state(state::Reader& r);
     const std::string& name(int id) const { return events_[static_cast<std::size_t>(id)].name; }
 
 private:

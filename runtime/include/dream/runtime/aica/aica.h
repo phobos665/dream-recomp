@@ -53,6 +53,9 @@ public:
     std::function<void(std::int16_t left, std::int16_t right)> on_sample;
     std::int16_t last_left = 0, last_right = 0;
 
+    // Save states (state/state.h): this device's registers and internal state.
+    void save_state(state::Writer& w) override;
+    void load_state(state::Reader& r) override;
     std::uint32_t reg16(std::uint32_t offset) const noexcept {
         return regs_[offset] | (static_cast<std::uint32_t>(regs_[offset + 1]) << 8);
     }

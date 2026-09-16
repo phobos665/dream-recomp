@@ -179,6 +179,9 @@ public:
     Device* device_for(unsigned port, std::uint8_t recipient) const noexcept;
     Device* device(unsigned port) const noexcept { return ports_[port].get(); }
 
+    // Save states (state/state.h): this device's registers and internal state.
+    void save_state(state::Writer& w) override;
+    void load_state(state::Reader& r) override;
     // Called by the SPG at VBlank-out: starts the transfer when the hardware trigger is selected.
     void vblank();
 

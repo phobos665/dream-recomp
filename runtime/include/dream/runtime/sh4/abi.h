@@ -67,6 +67,21 @@ void resume_miss(Ctx& c, ::dream::Memory& m, std::uint32_t pc);
 void run_guest(Ctx& c, ::dream::Memory& m, std::uint32_t entry);
 // Same, starting from a function pointer (the test harness links many programs at one base).
 void run_guest(Ctx& c, ::dream::Memory& m, GuestFn entry);
+// Runs the program from `pc` rather than from a call: the same loop run_guest enters after a
+// non-local return, started deliberately. This is what loading a save state uses -- a state is a
+// (Ctx, memory) pair with no host call chain behind it, which is exactly the situation a
+// cooperative task switch leaves, and the guest's own stack and PR rebuild the chain one frame at a
+// time as each resumed function returns. Runs until the guest returns past the PR in `c`.
+void resume_guest(Ctx& c, ::dream::Memory& m, std::uint32_t pc);
+// True when `pc` names a translated block this build can be re-entered at: a function entry, or an
+// address inside a function that has a resume entry. False means a resume there falls to the
+// development interpreter (and, in a release build, throws). The launcher records the answer in a
+// save state's header so a bad capture point is a refusal rather than a fault.
+bool resumable(std::uint32_t pc, ::dream::Memory& m) noexcept;
+// Identifies the emitted code: how many translations are registered, and a hash over their guest
+// address ranges. Two builds that agree on this translated the same binary with the same discovery
+// inputs, which is the condition for a save state's guest addresses to still mean anything.
+std::uint64_t function_table_fingerprint(std::uint64_t* count) noexcept;
 
 // Exceptions and interrupts. Emitted code calls deliver_irq when `c.cycles >= c.next_event`.
 void deliver_irq(Ctx& c, ::dream::Memory& m);

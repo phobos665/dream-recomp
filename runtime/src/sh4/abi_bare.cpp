@@ -260,9 +260,16 @@ void resume_at(Ctx& c, ::dream::Memory& m, std::uint32_t pc) {
 }
 
 namespace {
+// `stop_pr` is the return address the run ends at. For a call it is the PR the entry function was
+// started with. For a resumed state there is no such frame -- the host chain the capture was taken
+// inside is gone -- so the caller passes kNoStop: an address no guest pc can take, which makes the
+// loop run until something stops it from outside (the launcher's watchdog, or a fault). Taking
+// c.pr for that case instead would arm the loop with a live guest address that the resumed program
+// puts back into PR the next time it calls from the same site, and the run would end there.
+constexpr std::uint32_t kNoStop = 0xFFFFFFFFu;
+
 template <typename Start>
-void run_guest_impl(Ctx& c, ::dream::Memory& m, Start start) {
-    const std::uint32_t stop_pr = c.pr;
+void run_guest_impl(Ctx& c, ::dream::Memory& m, Start start, std::uint32_t stop_pr) {
     std::uint32_t pc = 0;
     bool resumed = false;
     for (;;) {
@@ -293,11 +300,40 @@ void run_guest_impl(Ctx& c, ::dream::Memory& m, Start start) {
 }  // namespace
 
 void run_guest(Ctx& c, ::dream::Memory& m, std::uint32_t entry) {
-    run_guest_impl(c, m, [&] { call_indirect(c, m, entry); });
+    run_guest_impl(c, m, [&] { call_indirect(c, m, entry); }, c.pr);
 }
 
 void run_guest(Ctx& c, ::dream::Memory& m, GuestFn entry) {
-    run_guest_impl(c, m, [&] { entry(c, m); });
+    run_guest_impl(c, m, [&] { entry(c, m); }, c.pr);
+}
+
+void resume_guest(Ctx& c, ::dream::Memory& m, std::uint32_t pc) {
+    // run_guest_impl's own start() is skipped by throwing straight into its resumed path, which is
+    // the same code the runtime has used for every Katana task switch since WP2.2. Writing it as a
+    // start() that throws keeps one copy of the loop rather than two that can drift.
+    run_guest_impl(c, m, [&] { throw NonLocalReturn{pc}; }, kNoStop);
+}
+
+bool resumable(std::uint32_t pc, ::dream::Memory& m) noexcept {
+    const std::uint32_t phys = pc & 0x1FFFFFFFu;
+    if (interpreted(phys))
+        return false;
+    const FunctionEntry* e = find_containing(pc, &m);
+    return e && (e->address == phys || e->resume != nullptr);
+}
+
+std::uint64_t function_table_fingerprint(std::uint64_t* count) noexcept {
+    constexpr std::uint64_t kPrime = 0x100000001B3ull;
+    std::uint64_t h = 0xCBF29CE484222325ull;
+    const auto& t = table();
+    for (const FunctionEntry& e : t) {
+        h = (h ^ e.address) * kPrime;
+        h = (h ^ e.end) * kPrime;
+        h = (h ^ e.signature_words) * kPrime;
+    }
+    if (count)
+        *count = t.size();
+    return h;
 }
 
 void call_indirect(Ctx& c, ::dream::Memory& m, std::uint32_t target) {

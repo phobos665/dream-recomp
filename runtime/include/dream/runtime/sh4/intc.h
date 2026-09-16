@@ -54,6 +54,9 @@ public:
     // MMIO: ICR 0xFFD00000, IPRA 0xFFD00004, IPRB 0xFFD00008, IPRC 0xFFD0000C (16-bit).
     std::uint32_t read(std::uint32_t addr, unsigned size) override;
     void write(std::uint32_t addr, std::uint32_t value, unsigned size) override;
+    // Save states (state/state.h): this device's registers and internal state.
+    void save_state(state::Writer& w) override;
+    void load_state(state::Reader& r) override;
     std::uint16_t ipra = 0, iprb = 0, iprc = 0, icr = 0;
 
 private:
