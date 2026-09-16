@@ -427,10 +427,13 @@ void Aica::load_state(state::Reader& r) {
     for (int& v : timer_left_) v = static_cast<int>(r.u32());
     samples = r.u64();
     arm.load_state(r);
-    // The mixer is not carried (see docs/design/save-states.md): its per-channel playback cursors
-    // and envelope phases live in mixer.cpp and are audio only. It reads the register block and
-    // sound RAM restored above, so a resumed run makes sound again from the next key-on; what is
-    // lost is the tail of whatever was already playing.
+    // The mixer's own state is not carried (see docs/design/save-states.md): the per-channel
+    // playback cursors and envelope phases live in mixer.cpp and are audio only. What it does need
+    // is to be told that the registers and sound RAM underneath it have been replaced, so it drops
+    // the channels it was part-way through and re-derives the ring buffer from what was restored.
+    // Without this it kept cursors into sound RAM that no longer says what it did -- audible as
+    // crackling -- and left the DSP pointed at the bottom of sound RAM, on top of the ARM7's code.
+    mixer.resync_after_load();
     update_arm_interrupts();
     update_sh4_interrupts();
 }

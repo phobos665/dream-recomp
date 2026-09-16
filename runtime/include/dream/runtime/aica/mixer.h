@@ -23,6 +23,12 @@ public:
     Mixer(const Mixer&) = delete;
     Mixer& operator=(const Mixer&) = delete;
     void reset();
+    // Put the mixer back in step with a register block and a sound RAM that were replaced under it,
+    // which is what loading a save state does. Order matters: reset() defaults RBP to 0, and the
+    // DSP then writes its output over whatever sits at the bottom of sound RAM -- on Crazy Taxi
+    // that is the ARM7's own code, and the sound CPU executes 1,994 undefined instructions. So
+    // re-derive the ring buffer from the restored registers afterwards, never before.
+    void resync_after_load();
 
     // A write landed in channel `channel`'s 0x80-byte slot at byte offset `reg` (size 1 or 2).
     void channel_reg_written(unsigned channel, unsigned reg, unsigned size);

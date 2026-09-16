@@ -836,6 +836,18 @@ void Mixer::reset() {
     key_ons = key_offs = samples = nonzero_samples = 0;
 }
 
+void Mixer::resync_after_load() {
+    // Deliberately not reset(): that re-runs Channel::init over the register block, and init is
+    // written for the zeroed registers a fresh machine has, not for the arbitrary values a state
+    // restores -- it faults on them. What has to happen here is narrower anyway. The ring buffer
+    // is re-derived from the restored registers, because RBP left at its default aims the DSP at
+    // the bottom of sound RAM, which on Crazy Taxi is the ARM7's own code. The DSP programme is
+    // marked dirty so it is recompiled from the sound RAM that came back with the state.
+    ring_buffer_written();
+    dsp_.dirty = true;
+    dsp_.stopped = false;
+}
+
 void Mixer::channel_reg_written(unsigned channel, unsigned reg, unsigned size) {
     chans_[channel & 63].reg_write(reg & 0x7F, size);
 }
