@@ -328,6 +328,15 @@ void DcMemory::sq_flush(std::uint32_t a) {
     const std::uint32_t dest = (qacr_[n] << 24) | (a & 0x03FFFFE0u);
     const std::uint32_t* words = sq_[n];
     const Target t = resolve(dest, 4, true);
+    ++sq_flushes;
+    if (t.kind != Target::kBytes && t.kind != Target::kMmio) {
+        ++sq_flushes_dropped;
+        if (sq_dropped_recorded < 4) {
+            sq_dropped_dest[sq_dropped_recorded] = dest;
+            sq_dropped_qacr[sq_dropped_recorded] = qacr_[n];
+            ++sq_dropped_recorded;
+        }
+    }
     if (t.kind == Target::kBytes) {
         if (journaling)
             for (unsigned i = 0; i < 8; ++i) {

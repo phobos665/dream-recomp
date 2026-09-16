@@ -132,6 +132,15 @@ public:
     // (docs/differential-harness.md). Off by default, and one predictable branch when on.
     bool hash_writes = false;
     std::uint64_t write_hash = 0, writes_hashed = 0;
+
+    // Store-queue flushes, and the ones that went nowhere. A flush whose destination resolves to
+    // neither memory nor a device used to return silently, discarding 32 bytes; the guest then
+    // reads back the structure it believes it wrote and finds whatever was there before. The
+    // destination is (QACR << 24) | (addr & 0x03FFFFE0), so a QACR the run never set sends a flush
+    // that belongs in RAM into unmapped space instead, and nothing says so.
+    std::uint64_t sq_flushes = 0, sq_flushes_dropped = 0;
+    std::uint32_t sq_dropped_dest[4]{}, sq_dropped_qacr[4]{};
+    unsigned sq_dropped_recorded = 0;
     // Once the hashes say which frame diverged, the individual writes in a window around it say
     // which one: [log_from, log_to) are reported with their index, so two runs can be diffed line
     // for line down to the store that differs.

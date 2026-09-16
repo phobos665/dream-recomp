@@ -60,9 +60,15 @@ void Replay::enter(std::uint32_t function, std::uint32_t assumed_mode) {
         bool take = capture_if_bad.empty();
         for (unsigned n : capture_if_bad) {
             const std::uint32_t v = ctx_.r[n & 15];
-            // Big enough to be meant as an address, but not one: every RAM alias of area 3 has
-            // 0x0C000000 in those bits, so a value that misses it is not a pointer into anything.
-            if (v >= 0x01000000u && (v & 0x1C000000u) != 0x0C000000u)
+            // Not a pointer into anything the guest has: RAM is any alias of area 3 (0x0C000000 in
+            // those bits), video memory is area 1, and the flash and boot ROM sit in area 0 below
+            // 0x00400000. The floor is low on purpose -- the value that started this hunt was
+            // 0x00EA65A4, which an "addresses are big" rule reads as a plausible small integer and
+            // lets through. Genuine counts and flags in an argument register are smaller still.
+            const bool is_ram = (v & 0x1C000000u) == 0x0C000000u;
+            const bool is_vram = (v & 0x1C000000u) == 0x04000000u;
+            const bool is_rom = v < 0x00400000u;
+            if (v >= 0x1000u && !is_ram && !is_vram && !is_rom)
                 take = true;
         }
         if (take)

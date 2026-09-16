@@ -716,6 +716,18 @@ std::string report_text(dream::System& sys, dream::hle::Bios& bios, const dream:
                   static_cast<unsigned long long>(sys.spg.frames()), sys.ctx.pc, host_seconds,
                   host_seconds > 0 ? guest_run_s / host_seconds : 0.0);
     s += buf;
+    if (sys.memory.sq_flushes_dropped) {
+        std::snprintf(buf, sizeof buf,
+                      "store queue: %llu flushes, %llu WENT NOWHERE (32 bytes each, discarded)\n",
+                      static_cast<unsigned long long>(sys.memory.sq_flushes),
+                      static_cast<unsigned long long>(sys.memory.sq_flushes_dropped));
+        s += buf;
+        for (unsigned i = 0; i < sys.memory.sq_dropped_recorded; ++i) {
+            std::snprintf(buf, sizeof buf, "  dest 0x%08x with QACR 0x%02x\n",
+                          sys.memory.sq_dropped_dest[i], sys.memory.sq_dropped_qacr[i]);
+            s += buf;
+        }
+    }
     std::snprintf(buf, sizeof buf, "interrupts delivered: %llu (max nesting %u), traps: %llu\n",
                   static_cast<unsigned long long>(sys.interrupts_delivered), sys.max_nesting,
                   static_cast<unsigned long long>(sys.traps_taken));
