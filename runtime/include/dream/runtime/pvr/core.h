@@ -84,6 +84,9 @@ public:
     void write(std::uint32_t addr, std::uint32_t value, unsigned size) override;
     void write_burst(std::uint32_t addr, const std::uint32_t* words) override;
 
+    // Save states (state/state.h): this device's registers and internal state.
+    void save_state(state::Writer& w) override;
+    void load_state(state::Reader& r) override;
     std::uint32_t reg(std::uint32_t offset) const noexcept { return regs_[offset >> 2]; }
     // The whole register block, for callers that need several registers as a unit: describing the
     // framebuffer takes four of them, and palette memory lives at offset 0x1000 inside it.

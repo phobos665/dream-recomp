@@ -22,6 +22,9 @@ public:
     std::uint32_t seconds() const noexcept { return seconds_; }
     void tick() noexcept { ++seconds_; }
 
+    // Save states (state/state.h): this device's registers and internal state.
+    void save_state(state::Writer& w) override;
+    void load_state(state::Reader& r) override;
     std::uint32_t read(std::uint32_t addr, unsigned) override {
         switch (addr & 0xFFu) {
             case kSecondsHi:

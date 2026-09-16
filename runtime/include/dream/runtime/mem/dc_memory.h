@@ -14,6 +14,11 @@
 
 #include "dream/runtime/memory.h"
 
+namespace dream::state {
+class Writer;
+class Reader;
+}  // namespace dream::state
+
 namespace dream::mem {
 
 // A device on the bus. Sizes are 1, 2 or 4; 64-bit accesses arrive as two 32-bit ones.
@@ -26,6 +31,13 @@ public:
     virtual void write_burst(std::uint32_t addr, const std::uint32_t* words) {
         for (unsigned i = 0; i < 8; ++i) write(addr + 4 * i, words[i], 4);
     }
+    // Save states (state/state.h, docs/design/save-states.md). A device that does not override
+    // these contributes nothing to a state and comes back from a load at its reset values. That is
+    // correct only for a device the guest reprograms before it next uses it, and wrong for one the
+    // guest programmed once at startup -- which is most of them, so overriding is the default and
+    // not overriding is the decision that needs a reason.
+    virtual void save_state(state::Writer&) {}
+    virtual void load_state(state::Reader&) {}
 };
 
 // A block of registers with no behaviour yet: reads return what was written. Used for on-chip
@@ -196,6 +208,12 @@ public:
 
     // The 32-bit VRAM view interleaves the two 4 MB banks word by word onto the 64-bit view.
     static std::uint32_t vram_map32(std::uint32_t offset32) noexcept;
+
+    // Save states: the CPU-side registers this class owns rather than a device -- the CCN block
+    // (including QACR0/1) and the two store-queue buffers. The RAM, VRAM and sound RAM blocks are
+    // written as their own sections by the caller, which already has pointers to them.
+    void save_state(state::Writer& w);
+    void load_state(state::Reader& r);
 
 private:
     struct Target {

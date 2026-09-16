@@ -66,6 +66,9 @@ public:
     void sys_gdrom(sh4::Ctx& c, ::dream::Memory& m);
     void sys_misc(sh4::Ctx& c, ::dream::Memory& m);
 
+    // Save states (state/state.h): this device's registers and internal state.
+    void save_state(state::Writer& w);
+    void load_state(state::Reader& r);
     Flash& flash() noexcept { return flash_; }
 
 private:

@@ -40,6 +40,7 @@
 #include "dream/runtime/maple/maple.h"
 #include "dream/runtime/mem/dc_memory.h"
 #include "dream/runtime/pvr/core.h"
+#include "dream/runtime/state/state.h"
 #include "dream/runtime/sh4/abi.h"
 #include "dream/runtime/sh4/dmac.h"
 #include "dream/runtime/sh4/ops.h"
@@ -1134,6 +1135,11 @@ void usage(const char* argv0, std::FILE* out) {
         "  --capture-out PREFIX   where those go (default: capture); writes PREFIX.N.ram.bin (16 MB\n"
         "                         each) and PREFIX.cases.json\n"
         "  --capture-count N      capture the first N entries rather than just the first\n"
+        "  --save-state FILE      write a resumable machine state and carry on running\n"
+        "  --save-state-at N      take it at the first safe point at or after guest frame N\n"
+        "  --save-state-stop      end the run once the state is written\n"
+        "  --load-state FILE      start from a state instead of booting the title\n"
+        "  --load-state-no-aica   restore everything but the sound hardware (divergence bisection)\n"
         "  --validation           turn on Vulkan validation layers\n"
         "  --framebuffer-writeback  write rendered frames back into video memory\n",
         argv0);
@@ -1349,6 +1355,17 @@ int main(int argc, char** argv) {
     // it does not return inside the journal's bound. See runtime/include/.../replay.h.
     std::string capture_entry, capture_out = "capture";
     unsigned capture_count = 1;
+    // --save-state FILE: write a resumable state at --save-state-at N (guest frame; 0 means the
+    // first opportunity). --load-state FILE starts from one instead of booting. See
+    // docs/design/save-states.md. A state is ~26 MB and is never committed.
+    std::string save_state_path, load_state_path;
+    std::uint64_t save_state_at = 0;
+    bool save_state_stop = false;  // --save-state-stop: end the run once the state is written
+    // --load-state-no-aica: restore everything except the sound hardware. The AICA is the one
+    // subsystem a stage-1 state carries only in part (the mixer's channel and DSP state is not in
+    // it), so when a resumed run diverges this says in one command whether the sound hardware is
+    // why. It is a bisection tool, not a mode to run in: the resumed title makes no sound.
+    bool load_state_no_aica = false;
     // Logging is on unless refused. A windowed session scrolls its terminal away, and a run that
     // dies takes the fault line with it -- which is the one line worth having. A log costs a file.
     std::string log_path;
@@ -1456,6 +1473,16 @@ int main(int argc, char** argv) {
             replay_only = argv[++i];
         else if (!std::strcmp(argv[i], "--capture-entry") && i + 1 < argc)
             capture_entry = argv[++i];
+        else if (!std::strcmp(argv[i], "--save-state") && i + 1 < argc)
+            save_state_path = argv[++i];
+        else if (!std::strcmp(argv[i], "--save-state-at") && i + 1 < argc)
+            save_state_at = std::strtoull(argv[++i], nullptr, 0);
+        else if (!std::strcmp(argv[i], "--save-state-stop"))
+            save_state_stop = true;
+        else if (!std::strcmp(argv[i], "--load-state") && i + 1 < argc)
+            load_state_path = argv[++i];
+        else if (!std::strcmp(argv[i], "--load-state-no-aica"))
+            load_state_no_aica = true;
         else if (!std::strcmp(argv[i], "--capture-out") && i + 1 < argc)
             capture_out = argv[++i];
         else if (!std::strcmp(argv[i], "--capture-count") && i + 1 < argc)
@@ -1887,6 +1914,192 @@ int main(int argc, char** argv) {
         sys.sched.request(rtc_tick, 200'000'000ull);
     });
     sys.sched.request(rtc_tick, 200'000'000ull);
+
+    // ------------------------------------------------------------------ save states
+    // docs/design/save-states.md. Everything the resumed run needs that is not guest memory is
+    // gathered here, in one place, because a state is only as good as its least-remembered device.
+    dream::state::Provenance prov;
+    prov.game_id = cfg.id;
+    prov.binary_sha1 = cfg.sha1_1st_read;
+    prov.entry = cfg.entry;
+    prov.table_fingerprint = dream::sh4::function_table_fingerprint(&prov.functions);
+
+    auto write_state = [&](const std::string& path) {
+        dream::state::Writer w;
+        // Bulk memory first: the file is then roughly in address order, which makes a hex dump of
+        // one worth reading.
+        w.begin("ram");
+        w.bytes(sys.memory.ram(), dream::mem::DcMemory::kRamSize);
+        w.begin("vram");
+        w.bytes(sys.memory.vram(), dream::mem::DcMemory::kVramSize);
+        w.begin("aram");
+        w.bytes(sys.memory.aram(), dream::mem::DcMemory::kAramSize);
+        w.begin("flash");
+        w.bytes(sys.memory.flash(), dream::mem::DcMemory::kFlashSize);
+        // The CPU context. Written field by field rather than as a blob: Ctx is the one struct the
+        // emitter indexes by name, and a state that silently means something different after a
+        // member is inserted is worse than one that refuses to load.
+        w.begin("sh4.ctx");
+        for (std::uint32_t v : sys.ctx.r) w.u32(v);
+        for (std::uint32_t v : sys.ctx.r_bank) w.u32(v);
+        for (std::uint32_t v : {sys.ctx.pc, sys.ctx.pr, sys.ctx.gbr, sys.ctx.vbr, sys.ctx.sr,
+                                sys.ctx.ssr, sys.ctx.spc, sys.ctx.sgr, sys.ctx.dbr, sys.ctx.mach,
+                                sys.ctx.macl, sys.ctx.fpul, sys.ctx.fpscr, sys.ctx.t})
+            w.u32(v);
+        for (float v : sys.ctx.fr) w.pod(v);
+        for (float v : sys.ctx.xf) w.pod(v);
+        w.u64(sys.ctx.cycles);
+        w.u64(sys.ctx.next_event);
+        w.begin("sh4.mem");
+        sys.memory.save_state(w);
+        w.begin("sched");
+        sys.sched.save_state(w);
+        w.begin("sh4.intc");
+        sys.intc.save_state(w);
+        w.begin("sh4.tmu");
+        sys.tmu.save_state(w);
+        w.begin("sh4.dmac");
+        dmac.save_state(w);
+        w.begin("holly.intc");
+        sys.holly.save_state(w);
+        w.begin("holly.sb");
+        sysblock.save_state(w);
+        w.begin("holly.g2");
+        g2.save_state(w);
+        w.begin("pvr.spg");
+        sys.spg.save_state(w);
+        w.begin("pvr.core");
+        pvr.save_state(w);
+        w.begin("maple", 2);
+        maple.save_state(w);
+        w.begin("aica");
+        aica.save_state(w);
+        w.begin("rtc");
+        aica_rtc.save_state(w);
+        w.begin("bios.gd");
+        bios.save_state(w);
+        // The regression instrument's rolling write hash, so that a resumed run's per-frame lines
+        // can be compared against an uninterrupted run's directly rather than by a delta. Marked
+        // optional: it is measurement, not machine state, and a reader that does not know it can
+        // drop it without affecting what the guest does.
+        w.begin("hash", 1, dream::state::kOptional);
+        w.u64(sys.memory.write_hash);
+        w.u64(sys.memory.writes_hashed);
+
+        std::uint32_t flags = 0;
+#ifdef DREAM_DEV_INTERPRETER
+        flags |= dream::state::kFlagDevInterpreter;
+#endif
+        const bool can_resume = dream::sh4::resumable(sys.ctx.pc, sys.memory);
+        if (can_resume)
+            flags |= dream::state::kFlagResumable;
+        std::string err;
+        if (!w.write(path, prov, sys.ctx.cycles, sys.spg.frames(), flags, err)) {
+            std::fprintf(stderr, "save-state: %s\n", err.c_str());
+            return false;
+        }
+        std::printf(
+            "save-state: %s at frame %llu (%.3f guest s), pc 0x%08x pr 0x%08x r15 0x%08x, %.1f MB"
+            "%s\n",
+            path.c_str(), static_cast<unsigned long long>(sys.spg.frames()),
+            static_cast<double>(sys.ctx.cycles) / 200e6, sys.ctx.pc, sys.ctx.pr, sys.ctx.r[15],
+            static_cast<double>(w.section_bytes()) / (1024.0 * 1024.0),
+            can_resume ? "" : " -- WARNING: pc is not a translated block start");
+        return true;
+    };
+
+    auto read_state = [&](const std::string& path) {
+        dream::state::Reader r;
+        std::string err;
+        if (!r.open(path, prov, err)) {
+            std::fprintf(stderr, "load-state: %s\n", err.c_str());
+            return false;
+        }
+        std::printf("load-state: %s: %s\n", path.c_str(), dream::state::describe(r).c_str());
+#ifndef DREAM_DEV_INTERPRETER
+        if (!(r.flags() & dream::state::kFlagResumable)) {
+            std::fprintf(stderr,
+                         "load-state: the capture pc is not a translated block start and this is a "
+                         "release build, which has no interpreter to resume it. Use a development "
+                         "build.\n");
+            return false;
+        }
+#endif
+        auto sect = [&](const char* name) {
+            if (r.seek(name))
+                return true;
+            std::fprintf(stderr, "load-state: no '%s' section; resuming without it\n", name);
+            return false;
+        };
+        if (sect("ram"))
+            r.bytes(sys.memory.ram(), dream::mem::DcMemory::kRamSize);
+        if (sect("vram"))
+            r.bytes(sys.memory.vram(), dream::mem::DcMemory::kVramSize);
+        if (sect("aram"))
+            r.bytes(sys.memory.aram(), dream::mem::DcMemory::kAramSize);
+        if (sect("flash"))
+            r.bytes(sys.memory.flash(), dream::mem::DcMemory::kFlashSize);
+        if (sect("sh4.ctx")) {
+            for (std::uint32_t& v : sys.ctx.r) v = r.u32();
+            for (std::uint32_t& v : sys.ctx.r_bank) v = r.u32();
+            for (std::uint32_t* v : {&sys.ctx.pc, &sys.ctx.pr, &sys.ctx.gbr, &sys.ctx.vbr,
+                                     &sys.ctx.sr, &sys.ctx.ssr, &sys.ctx.spc, &sys.ctx.sgr,
+                                     &sys.ctx.dbr, &sys.ctx.mach, &sys.ctx.macl, &sys.ctx.fpul,
+                                     &sys.ctx.fpscr, &sys.ctx.t})
+                *v = r.u32();
+            for (float& v : sys.ctx.fr) r.pod(v);
+            for (float& v : sys.ctx.xf) r.pod(v);
+            sys.ctx.cycles = r.u64();
+            sys.ctx.next_event = r.u64();
+        }
+        if (sect("sh4.mem"))
+            sys.memory.load_state(r);
+        if (sect("sched"))
+            sys.sched.load_state(r);
+        if (sect("sh4.intc"))
+            sys.intc.load_state(r);
+        if (sect("sh4.tmu"))
+            sys.tmu.load_state(r);
+        if (sect("sh4.dmac"))
+            dmac.load_state(r);
+        if (sect("holly.intc"))
+            sys.holly.load_state(r);
+        if (sect("holly.sb"))
+            sysblock.load_state(r);
+        if (sect("holly.g2"))
+            g2.load_state(r);
+        if (sect("pvr.spg"))
+            sys.spg.load_state(r);
+        if (sect("pvr.core"))
+            pvr.load_state(r);
+        if (sect("maple"))
+            maple.load_state(r);
+        if (load_state_no_aica)
+            std::printf("load-state: skipping the sound hardware (--load-state-no-aica)\n");
+        else if (sect("aica"))
+            aica.load_state(r);
+        if (sect("rtc"))
+            aica_rtc.load_state(r);
+        if (sect("bios.gd"))
+            bios.load_state(r);
+        if (r.seek("hash")) {
+            sys.memory.write_hash = r.u64();
+            sys.memory.writes_hashed = r.u64();
+        }
+        if (!r.ok()) {
+            std::fprintf(stderr, "load-state: a section ended early; the file is truncated\n");
+            return false;
+        }
+        // The guest polls `cycles >= next_event` to reach the scheduler. Whatever the state held,
+        // arming it for the next deadline now costs one poll and removes a class of "the resumed
+        // run never delivered another interrupt".
+        sys.ctx.next_event = sys.sched.next_deadline();
+        std::printf("load-state: resuming at pc 0x%08x pr 0x%08x r15 0x%08x, frame %llu\n",
+                    sys.ctx.pc, sys.ctx.pr, sys.ctx.r[15],
+                    static_cast<unsigned long long>(sys.spg.frames()));
+        return true;
+    };
+
     // Frame and time limits, checked once per scanline.
     int tick = -1;
     const std::uint64_t period = sys.spg.line_cycles();
@@ -1928,6 +2141,9 @@ int main(int argc, char** argv) {
         }
         sys.memory.hash_writes = true;
         sys.memory.hash_mask_segment = mask_segment;
+        // Line buffered: a run that has to be killed -- because it is stuck, which is the case the
+        // hash is most wanted for -- still leaves every frame it reached on disk.
+        std::setvbuf(hash_file, nullptr, _IOLBF, 0);
         std::fprintf(hash_file, "# frame cycles hash writes\n");
     }
     FILE* log_file = nullptr;
@@ -1948,6 +2164,7 @@ int main(int argc, char** argv) {
                          static_cast<unsigned long long>(value), sys.ctx.pc, sys.ctx.pr);
         };
     }
+    bool state_saved = false;
     tick = sys.sched.add("watchdog", [&](std::uint64_t now, std::uint64_t) {
         if (hash_file && sys.spg.frames() != hashed_frame) {
             hashed_frame = sys.spg.frames();
@@ -1983,6 +2200,34 @@ int main(int argc, char** argv) {
         if (max_seconds && now >= max_seconds * 200'000'000ull)
             throw StopRun{"time limit"};
         sys.sched.request(tick, period);
+
+        // Save states are taken here, from a scheduler event, because of what emitted code
+        // guarantees at exactly this point and nowhere else. A translated function updates ctx.pc
+        // once per basic block, immediately before it polls: `c.pc = <block start>;
+        // deliver_irq(c, m);`. The scheduler runs from inside that poll, so ctx.pc is not merely
+        // current, it is an address the function's own resume entry has a label for. Anywhere else
+        // ctx.pc is the last block start passed, which is stale, and resuming there would
+        // re-execute part of a block.
+        //
+        // After `request(tick, period)` and not before, because Scheduler::advance_to disarms an
+        // event before it calls it and leaves re-arming to the callback. A state captured at the
+        // top of this function recorded the watchdog as disarmed, and the resumed run then had no
+        // watchdog: no per-frame hash, no frame limit and no time limit. It ran, correctly, and
+        // reported nothing, which reads exactly like a hang.
+        //
+        // Two poll sites still do not qualify. The clock is also advanced on the way into a device
+        // access, where the guest is mid-block; and a poll that delivered an interrupt runs the
+        // handler as a nested call, where the capture would be of the handler rather than of the
+        // program. Both are skipped and the next scanline is tried instead.
+        if (!save_state_path.empty() && !state_saved && sys.spg.frames() >= save_state_at &&
+            !sys.advancing_for_device && sys.nesting == 0 &&
+            dream::sh4::resumable(sys.ctx.pc, sys.memory)) {
+            state_saved = true;
+            if (!write_state(save_state_path))
+                throw StopRun{"save state failed"};
+            if (save_state_stop)
+                throw StopRun{"state saved"};
+        }
     });
     sys.sched.request(tick, period);
     // Optional register sampler: every N cycles record pc (last call site), r15, r0, sr.
@@ -2100,6 +2345,15 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "no translated function at entry 0x%08x\n", cfg.entry);
         return 2;
     }
+    // Loading happens here and not earlier: the scheduler section restores deadlines by event
+    // name, so every event this run will ever register has to exist first -- including the
+    // watchdog and the optional register sampler, which are added just above.
+    bool resumed_from_state = false;
+    if (!load_state_path.empty()) {
+        if (!read_state(load_state_path))
+            return 2;
+        resumed_from_state = true;
+    }
     const char* stop = "returned from the entry function";
     int rc = 0;
     const auto t0 = std::chrono::steady_clock::now();
@@ -2113,7 +2367,8 @@ int main(int argc, char** argv) {
             iopt.native_lo = dream::hle::Bios::kHookSystem;
             iopt.native_hi = dream::hle::Bios::kHookGd2 + 2;
             sys.interpret_all = true;
-            sys.ctx.pc = cfg.entry;
+            if (!resumed_from_state)
+                sys.ctx.pc = cfg.entry;
             // A cooperative task switch abandons the guest context it was running in: rte()
             // throws NonLocalReturn past every host frame between there and here. run_guest()
             // drives that loop for translated code, and this path does not go through it, so
@@ -2136,7 +2391,10 @@ int main(int argc, char** argv) {
         {
             (void)interpret_all;
             (void)entry;
-            dream::sh4::run_guest(sys.ctx, sys.memory, cfg.entry);
+            if (resumed_from_state)
+                dream::sh4::resume_guest(sys.ctx, sys.memory, sys.ctx.pc);
+            else
+                dream::sh4::run_guest(sys.ctx, sys.memory, cfg.entry);
         }
     } catch (const StopRun& s) {
         stop = s.why;

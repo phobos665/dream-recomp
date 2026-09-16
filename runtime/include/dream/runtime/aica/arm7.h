@@ -7,6 +7,11 @@
 
 #include <cstdint>
 
+namespace dream::state {
+class Writer;
+class Reader;
+}  // namespace dream::state
+
 namespace dream::aica {
 
 // What the ARM7 sees: 2 MB of sound RAM mirrored through 0x007FFFFF and the AICA registers at
@@ -97,6 +102,9 @@ public:
     int mode() const noexcept { return mode_; }
     bool fiq_enabled() const noexcept { return fiq_enable_; }
 
+    // Save states (state/state.h): this device's registers and internal state.
+    void save_state(state::Writer& w);
+    void load_state(state::Reader& r);
     std::uint64_t instructions = 0, fiqs = 0, swis = 0, undefined_ops = 0;
     std::uint64_t fiqs_by_level[8] = {};
 

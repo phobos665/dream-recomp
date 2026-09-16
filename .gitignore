@@ -27,6 +27,11 @@ dc_flash*
 *.vms
 *.vmi
 
+# Save states (--save-state). A state is a 26 MB image of guest RAM, video memory and sound
+# RAM, so it contains disc-derived data by definition and is never committed.
+*.state
+*.dcstate
+
 # Build output
 build/
 build-*/

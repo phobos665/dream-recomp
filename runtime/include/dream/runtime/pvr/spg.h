@@ -27,6 +27,9 @@ public:
     std::uint32_t read(std::uint32_t addr, unsigned size) override;
     void write(std::uint32_t addr, std::uint32_t value, unsigned size) override;
 
+    // Save states (state/state.h): this device's registers and internal state.
+    void save_state(state::Writer& w) override;
+    void load_state(state::Reader& r) override;
     std::uint32_t scanline() const noexcept { return scanline_; }
     std::uint32_t lines() const noexcept { return ((spg_load >> 16) & 0x3FFu) + 1; }
     std::uint64_t line_cycles() const noexcept { return line_cycles_; }
