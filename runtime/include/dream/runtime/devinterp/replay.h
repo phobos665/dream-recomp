@@ -71,6 +71,23 @@ public:
     // against FPSCR on the way in, so one run names every function the inference got wrong.
     std::uint64_t mode_mismatches = 0;
     std::vector<std::uint32_t> mode_mismatch_functions;
+    // Capturing a real call's inputs, instead of comparing it (WP3.2).
+    //
+    // Comparing a function needs it to return inside the journal's bound, and the functions that
+    // most need comparing are exactly the ones that do not: a 3,352-byte function that walks a
+    // scene graph is abandoned as "too long" on every call, and the differential harness cannot
+    // synthesise inputs for it either, because it dereferences pointers into live heap.
+    //
+    // So capture the call instead of replaying it. At the entry, write the whole of guest RAM and
+    // the register state as a differential-harness case; the oracle and the recompiled runner both
+    // load an image at a base, so a RAM image at 0x0c000000 puts each of them in exactly the state
+    // the real run was in. No journal is held and nothing is undone, so the length of the function
+    // stops mattering.
+    std::vector<std::uint32_t> capture;
+    std::string capture_prefix;
+    unsigned capture_limit = 1;
+    unsigned captured = 0;
+
     // A comparison that has journalled more than this is abandoned: it is almost certainly a
     // function that does not return for a long time, and holding memory hostage for it would stop
     // anything else being compared.
@@ -79,10 +96,20 @@ public:
 
 private:
     void enter_impl(std::uint32_t function);
+    // Writes guest RAM and the entry context as a case the differential harness can run.
+    void capture_entry(std::uint32_t function);
     bool wanted(std::uint32_t function) const;
     // Compares the interpreted exit against the translated one, appending to divergences_.
     void compare(std::uint32_t function, const sh4::Ctx& translated,
                  const std::vector<mem::DcMemory::WriteRecord>& translated_writes);
+
+    // One captured call: the RAM image written for it and the context it was entered with.
+    struct Capture {
+        std::uint32_t function;
+        std::string ram_path;
+        sh4::Ctx ctx;
+    };
+    std::vector<Capture> captured_cases_;
 
     sh4::Ctx& ctx_;
     mem::DcMemory& memory_;

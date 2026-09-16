@@ -35,6 +35,8 @@ if(EXISTS ${_ct_image})
     "ct_0293ae|${_ct_image}|0x0c010000|0x0c0293ae:0x0c029440:ct_0293ae"
     "ct_0525b4|${_ct_image}|0x0c010000|0x0c0525b4:0x0c052626:ct_0525b4"
     "ct_14a404|${_ct_image}|0x0c010000|0x0c14a404:0x0c14a4f8:ct_14a404"
+    "ct_077ad0|${_ct_image}|0x0c010000|0x0c077ad0:0x0c077ae8:ct_077ad0"
+    "fn_0c07b760|${_ct_image}|0x0c010000|0x0c07b760:0x0c07c478:fn_0c07b760"
     "ct_14b860|${_ct_image}|0x0c010000|0x0c14b860:0x0c14b8d0:ct_14b860"
   )
 endif()

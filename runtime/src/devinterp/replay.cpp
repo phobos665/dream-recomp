@@ -7,6 +7,7 @@
 
 #include "dream/runtime/devinterp/interpreter.h"
 #include "dream/runtime/sh4/abi.h"
+#include "dream/runtime/sh4/ops.h"
 
 namespace dream::devinterp {
 
@@ -54,7 +55,63 @@ void Replay::enter(std::uint32_t function, std::uint32_t assumed_mode) {
             }
         }
     }
+    if (!capture.empty() && !replaying_ && captured < capture_limit &&
+        std::find(capture.begin(), capture.end(), function) != capture.end())
+        capture_entry(function);
     return enter_impl(function);
+}
+
+void Replay::capture_entry(std::uint32_t function) {
+    const std::uint32_t kRamBase = 0x0c000000u, kRamSize = 16u * 1024u * 1024u;
+    // std::string, not a fixed buffer: a scratchpad path is easily longer than 64 characters and
+    // a truncated one silently wrote the image somewhere else.
+    std::string ram_path = capture_prefix + "." + std::to_string(captured) + ".ram.bin";
+
+    // Guest RAM, so both engines see the pointers this call is about to dereference.
+    if (FILE* f = std::fopen(ram_path.c_str(), "wb")) {
+        std::vector<std::uint32_t> row(1024);
+        for (std::uint32_t off = 0; off < kRamSize; off += 4096) {
+            for (std::uint32_t i = 0; i < 1024; ++i) row[i] = memory_.read32(kRamBase + off + i * 4);
+            std::fwrite(row.data(), 4, row.size(), f);
+        }
+        std::fclose(f);
+    } else {
+        std::fprintf(stderr, "capture: cannot write %s\n", ram_path.c_str());
+        return;
+    }
+
+    captured_cases_.push_back(Capture{function, ram_path, ctx_});
+    // Rewritten whole on every capture, so the file is valid JSON even if the run then faults --
+    // which, for the functions worth capturing, is the usual ending.
+    std::string cases_path = capture_prefix + ".cases.json";
+    FILE* j = std::fopen(cases_path.c_str(), "wb");
+    if (!j) {
+        std::fprintf(stderr, "capture: cannot write %s\n", cases_path.c_str());
+        return;
+    }
+    std::fprintf(j, "[\n");
+    for (std::size_t k = 0; k < captured_cases_.size(); ++k) {
+        const Capture& cap = captured_cases_[k];
+        std::fprintf(j, " {\"name\": \"fn_%08x_%zu\", \"program\": \"fn_%08x\",\n", cap.function,
+                     k, cap.function);
+        std::fprintf(j, "  \"image\": \"%s\", \"base\": \"0x0c000000\", \"entry\": \"0x%08x\",\n",
+                     cap.ram_path.c_str(), cap.function);
+        std::fprintf(j, "  \"fpscr\": \"0x%08x\",\n", cap.ctx.fpscr);
+        std::fprintf(j, "  \"regs\": {");
+        for (int i = 0; i < 16; ++i)
+            std::fprintf(j, "%s\"r%d\": \"0x%08x\"", i ? ", " : "", i, cap.ctx.r[i]);
+        std::fprintf(j, "},\n  \"fregs\": {");
+        for (int i = 0; i < 16; ++i)
+            std::fprintf(j, "%s\"fr%d\": \"0x%08x\"", i ? ", " : "", i, sh4::f2u(cap.ctx.fr[i]));
+        std::fprintf(j, "}}%s\n", k + 1 < captured_cases_.size() ? "," : "");
+    }
+    std::fprintf(j, "]\n");
+    std::fclose(j);
+
+    ++captured;
+    std::fprintf(stderr, "capture: fn_%08x entry %u of %u -> %s (pr=%u sz=%u)\n", function,
+                 captured, capture_limit, ram_path.c_str(), (ctx_.fpscr >> 19) & 1u,
+                 (ctx_.fpscr >> 20) & 1u);
 }
 
 void Replay::enter_impl(std::uint32_t function) {

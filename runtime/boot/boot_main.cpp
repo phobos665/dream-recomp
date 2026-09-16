@@ -1129,6 +1129,11 @@ void usage(const char* argv0, std::FILE* out) {
         "  --replay               check each translated call against the interpreter\n"
         "  --replay-self-check    check the replay harness against itself\n"
         "  --replay-only ADDR     restrict the replay check to one function\n"
+        "  --capture-entry ADDR   write guest RAM and the registers at this function's entry as a\n"
+        "                         differential-harness case, for a function too long to replay\n"
+        "  --capture-out PREFIX   where those go (default: capture); writes PREFIX.N.ram.bin (16 MB\n"
+        "                         each) and PREFIX.cases.json\n"
+        "  --capture-count N      capture the first N entries rather than just the first\n"
         "  --validation           turn on Vulkan validation layers\n"
         "  --framebuffer-writeback  write rendered frames back into video memory\n",
         argv0);
@@ -1340,6 +1345,10 @@ int main(int argc, char** argv) {
     // functions, because comparing every call is slow.
     bool replay_all = false, replay_self_check = false;
     std::string replay_only;
+    // --capture-entry: the inputs of a real call, for a function the replay cannot compare because
+    // it does not return inside the journal's bound. See runtime/include/.../replay.h.
+    std::string capture_entry, capture_out = "capture";
+    unsigned capture_count = 1;
     // Logging is on unless refused. A windowed session scrolls its terminal away, and a run that
     // dies takes the fault line with it -- which is the one line worth having. A log costs a file.
     std::string log_path;
@@ -1445,6 +1454,12 @@ int main(int argc, char** argv) {
             replay_self_check = true;
         else if (!std::strcmp(argv[i], "--replay-only") && i + 1 < argc)
             replay_only = argv[++i];
+        else if (!std::strcmp(argv[i], "--capture-entry") && i + 1 < argc)
+            capture_entry = argv[++i];
+        else if (!std::strcmp(argv[i], "--capture-out") && i + 1 < argc)
+            capture_out = argv[++i];
+        else if (!std::strcmp(argv[i], "--capture-count") && i + 1 < argc)
+            capture_count = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--write-log-range") && i + 1 < argc) {
             const char* spec = argv[++i];
             log_from = std::strtoull(spec, nullptr, 0);
@@ -2039,7 +2054,7 @@ int main(int argc, char** argv) {
     }
 #ifdef DREAM_DEV_INTERPRETER
     dream::devinterp::Replay replay(sys.ctx, sys.memory);
-    if (replay_all || replay_self_check || !replay_only.empty()) {
+    if (replay_all || replay_self_check || !replay_only.empty() || !capture_entry.empty()) {
         for (const char* p = replay_only.c_str(); *p;) {
             char* end = nullptr;
             const unsigned long v = std::strtoul(p, &end, 0);
@@ -2048,9 +2063,28 @@ int main(int argc, char** argv) {
             replay.only.push_back(static_cast<std::uint32_t>(v));
             p = (*end == ',') ? end + 1 : end;
         }
+        for (const char* p = capture_entry.c_str(); *p;) {
+            char* end = nullptr;
+            const unsigned long v = std::strtoul(p, &end, 0);
+            if (end == p)
+                break;
+            replay.capture.push_back(static_cast<std::uint32_t>(v));
+            p = (*end == ',') ? end + 1 : end;
+        }
+        replay.capture_prefix = capture_out;
+        replay.capture_limit = capture_count;
+        // Capturing does not need the comparison, and comparing every function costs most of the
+        // frame rate -- which matters when reaching the code means someone playing the game to the
+        // point where it faults. Asking only for a capture restricts the comparison to the same
+        // functions, which are then skipped as too long: the cost is the hook and nothing else.
+        if (replay.only.empty() && !replay_all && !replay_self_check)
+            replay.only = replay.capture;
         replay.interrupts = &sys.interrupts_delivered;
         replay.self_check = replay_self_check;
         dream::devinterp::set_replay(&replay);
+        if (!replay.capture.empty())
+            std::printf("capture: writing the first %u entry (16 MB each) to %s.N.ram.bin\n",
+                        capture_count, capture_out.c_str());
         std::printf(
             "replay: comparing %s against %s\n",
             replay.only.empty() ? "every function" : "the named functions",
