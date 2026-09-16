@@ -696,7 +696,8 @@ struct SerialCapture final : dream::mem::MmioHandler {
 };
 
 std::string report_text(dream::System& sys, dream::hle::Bios& bios, const dream::pvr::Core& pvr,
-                        const char* stop, double host_seconds, const std::vector<char>& image,
+                        const char* stop, double host_seconds, double guest_seconds_at_start,
+                        const std::vector<char>& image,
                         std::uint32_t image_base, const dream::maple::Bus& maple,
                         const dream::maple::Controller* pad_ptr,
                         const dream::maple::MemoryCard* card_ptr, const dream::aica::Aica& aica,
@@ -705,12 +706,15 @@ std::string report_text(dream::System& sys, dream::hle::Bios& bios, const dream:
     std::string s;
     char buf[512];
     const double guest_s = static_cast<double>(sys.ctx.cycles) / 200e6;
+    // A run resumed from a save state starts with the guest clock already advanced, so the honest
+    // speed is the time this run executed over the time it took, not the guest's whole history.
+    const double guest_run_s = guest_s - guest_seconds_at_start;
     std::snprintf(buf, sizeof buf,
                   "stop: %s\nguest: %.3f s (%llu cycles), %llu frames, pc 0x%08x\nhost: %.2f s "
                   "(%.1fx real time)\n",
                   stop, guest_s, static_cast<unsigned long long>(sys.ctx.cycles),
                   static_cast<unsigned long long>(sys.spg.frames()), sys.ctx.pc, host_seconds,
-                  host_seconds > 0 ? guest_s / host_seconds : 0.0);
+                  host_seconds > 0 ? guest_run_s / host_seconds : 0.0);
     s += buf;
     std::snprintf(buf, sizeof buf, "interrupts delivered: %llu (max nesting %u), traps: %llu\n",
                   static_cast<unsigned long long>(sys.interrupts_delivered), sys.max_nesting,
@@ -1141,6 +1145,11 @@ void usage(const char* argv0, std::FILE* out) {
         "  --save-state-stop      end the run once the state is written\n"
         "  --load-state FILE      start from a state instead of booting the title\n"
         "  --load-state-no-aica   restore everything but the sound hardware (divergence bisection)\n"
+        "  --save-slot N          save into slot N (0-9) for this title, overwriting it\n"
+        "  --load-slot N          start from slot N\n"
+        "  --list-slots           show which slots this title has, and their frames\n"
+        "  --record-input FILE    record what the controller reports each frame\n"
+        "  --play-input FILE      drive the controller from a recording instead of the window\n"
         "  --validation           turn on Vulkan validation layers\n"
         "  --framebuffer-writeback  write rendered frames back into video memory\n",
         argv0);
@@ -1238,6 +1247,32 @@ private:
 // One file per run, named for the title and the wall clock, because the interesting question after
 // a session is usually "what did the run that just broke do", and a single overwritten file answers
 // it only until the next launch.
+// Save states by numbered slot, which is how anyone who has used an emulator expects to address
+// them. A slot is a stable path per title, so --save-slot 3 overwrites slot 3 and --load-slot 3
+// picks it up in a later run without anyone having to keep track of a filename.
+std::string slot_path(const std::string& game_id, unsigned slot) {
+    const char* home = std::getenv("HOME");
+#if defined(_WIN32)
+    const char* base = std::getenv("APPDATA");
+    std::string dir = base ? std::string(base) + "\\dream-recomp\\states\\" : std::string();
+#elif defined(__APPLE__)
+    std::string dir =
+        home ? std::string(home) + "/Library/Application Support/dream-recomp/states/" : std::string();
+#else
+    const char* xdg = std::getenv("XDG_STATE_HOME");
+    std::string dir = xdg ? std::string(xdg) + "/dream-recomp/states/"
+                          : (home ? std::string(home) + "/.local/state/dream-recomp/states/"
+                                  : std::string());
+#endif
+    if (dir.empty())
+        return {};
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec)
+        return {};
+    return dir + (game_id.empty() ? "run" : game_id) + "-slot" + std::to_string(slot) + ".state";
+}
+
 std::string default_log_path(const std::string& game_id) {
     const char* home = std::getenv("HOME");
 #if defined(_WIN32)
@@ -1355,6 +1390,12 @@ int main(int argc, char** argv) {
     // --capture-entry: the inputs of a real call, for a function the replay cannot compare because
     // it does not return inside the journal's bound. See runtime/include/.../replay.h.
     std::string capture_entry, capture_out = "capture", capture_if_bad;
+    // A save state puts the machine back; it does not put the player back. Reaching a fault that
+    // is seconds into gameplay needs the inputs that followed as well, so record what the
+    // controller reports each frame and replay it against a state loaded at the same frame.
+    std::string record_input, play_input;
+    int save_slot = -1, load_slot = -1;
+    bool list_slots = false;
     unsigned capture_count = 1;
     // --save-state FILE: write a resumable state at --save-state-at N (guest frame; 0 means the
     // first opportunity). --load-state FILE starts from one instead of booting. See
@@ -1490,6 +1531,16 @@ int main(int argc, char** argv) {
             capture_count = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--capture-if-bad") && i + 1 < argc)
             capture_if_bad = argv[++i];
+        else if (!std::strcmp(argv[i], "--record-input") && i + 1 < argc)
+            record_input = argv[++i];
+        else if (!std::strcmp(argv[i], "--play-input") && i + 1 < argc)
+            play_input = argv[++i];
+        else if (!std::strcmp(argv[i], "--save-slot") && i + 1 < argc)
+            save_slot = std::atoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--load-slot") && i + 1 < argc)
+            load_slot = std::atoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--list-slots"))
+            list_slots = true;
         else if (!std::strcmp(argv[i], "--write-log-range") && i + 1 < argc) {
             const char* spec = argv[++i];
             log_from = std::strtoull(spec, nullptr, 0);
@@ -1521,6 +1572,57 @@ int main(int argc, char** argv) {
         if (!log_path.empty() && run_log.start(log_path))
             std::printf("log: %s\n", log_path.c_str());
     }
+    // Slots resolve to paths before anything uses them, so everything downstream sees an ordinary
+    // --save-state/--load-state and there is one code path rather than two.
+    {
+        const std::string stem = std::filesystem::path(config).stem().string();
+        if (list_slots) {
+            std::printf("save-state slots for %s:\n", stem.c_str());
+            bool any = false;
+            for (unsigned s = 0; s < 10; ++s) {
+                const std::string path = slot_path(stem, s);
+                std::error_code ec;
+                const auto size = std::filesystem::file_size(path, ec);
+                if (ec)
+                    continue;
+                any = true;
+                // Size and age only: validating the header needs this build's provenance, which is
+                // not built until the title is loaded, and a listing should not need the title.
+                // Loading the slot prints the frame, and refuses with a reason if it does not fit.
+                const auto when = std::filesystem::last_write_time(path, ec);
+                const auto age = std::chrono::duration_cast<std::chrono::minutes>(
+                                     decltype(when)::clock::now() - when)
+                                     .count();
+                std::printf("  slot %u  %.1f MB  %lld min ago\n", s,
+                            static_cast<double>(size) / 1048576.0, static_cast<long long>(age));
+            }
+            if (!any)
+                std::printf("  (none)\n");
+            return 0;
+        }
+        if (save_slot >= 0) {
+            if (save_slot > 9) {
+                std::fprintf(stderr, "--save-slot must be 0 to 9\n");
+                return 2;
+            }
+            save_state_path = slot_path(stem, static_cast<unsigned>(save_slot));
+        }
+        if (load_slot >= 0) {
+            if (load_slot > 9) {
+                std::fprintf(stderr, "--load-slot must be 0 to 9\n");
+                return 2;
+            }
+            load_state_path = slot_path(stem, static_cast<unsigned>(load_slot));
+            std::error_code ec;
+            if (!std::filesystem::exists(load_state_path, ec)) {
+                std::fprintf(stderr, "--load-slot %d: %s does not exist (--list-slots shows what "
+                                     "this title has)\n",
+                             load_slot, load_state_path.c_str());
+                return 2;
+            }
+        }
+    }
+
     if (scale < 1 || scale > 4) {
         std::fprintf(stderr, "--scale must be 1 to 4\n");
         return 2;
@@ -1776,7 +1878,45 @@ int main(int argc, char** argv) {
                     scripted.push_back({frame, n.bit});
         }
     }
+    // Frame-indexed controller states. Absolute frame numbers, so a recording lines up with a
+    // state saved at any frame in the same run without further bookkeeping.
+    struct InputFrame {
+        std::uint64_t frame;
+        dream::maple::ControllerState pad;
+    };
+    std::vector<InputFrame> input_playback;
+    std::size_t playback_pos = 0;
+    if (!play_input.empty()) {
+        std::ifstream pb(play_input, std::ios::binary);
+        InputFrame f{};
+        while (pb.read(reinterpret_cast<char*>(&f), sizeof f))
+            input_playback.push_back(f);
+        std::printf("play-input: %s, %zu frames (%llu..%llu)\n", play_input.c_str(),
+                    input_playback.size(),
+                    static_cast<unsigned long long>(input_playback.empty() ? 0
+                                                                           : input_playback.front().frame),
+                    static_cast<unsigned long long>(input_playback.empty() ? 0
+                                                                           : input_playback.back().frame));
+    }
+    std::ofstream input_log;
+    if (!record_input.empty()) {
+        input_log.open(record_input, std::ios::binary);
+        if (!input_log)
+            std::fprintf(stderr, "--record-input %s: cannot open for writing\n",
+                         record_input.c_str());
+    }
+
     sys.spg.on_vblank_out = [&] {
+        if (!input_playback.empty()) {
+            const std::uint64_t f = sys.spg.frames();
+            // Advance to this frame and hold the last state past the end of the recording, which
+            // is what a player letting go of the pad looks like.
+            while (playback_pos + 1 < input_playback.size() &&
+                   input_playback[playback_pos + 1].frame <= f)
+                ++playback_pos;
+            if (input_playback[playback_pos].frame <= f)
+                pad_ptr->state = input_playback[playback_pos].pad;
+        }
         if (!scripted.empty()) {
             const std::uint64_t f = sys.spg.frames();
             std::uint16_t held = 0;
@@ -1785,6 +1925,10 @@ int main(int argc, char** argv) {
                     held |= bit;
             pad_ptr->state.buttons = static_cast<std::uint16_t>(0xFFFFu & ~held);
         }
+        if (input_log) {
+            const InputFrame f{sys.spg.frames(), pad_ptr->state};
+            input_log.write(reinterpret_cast<const char*>(&f), sizeof f);
+        }
         maple.vblank();
     };
 #ifdef DREAM_WITH_RENDERER
@@ -1792,6 +1936,16 @@ int main(int argc, char** argv) {
     // headless run uses. Both hooks may already be taken (--dump-ta captures renders, the scripted
     // presses run at vblank), so each is chained rather than replaced.
     std::unique_ptr<Live> live;
+    // Pacing state for a windowed run. Declared out here, not inside the block below, because the
+    // vblank lambda that mutates it outlives that block: it is installed into sys.spg.on_vblank_out
+    // and runs for the whole guest loop, so anything it captures by reference has to live at least
+    // that long. Capturing these from inside the block wrote through dangling stack pointers, and
+    // the corruption surfaced somewhere else entirely -- a save state reading guest RAM from
+    // 0x8800000000000000, because the closure's captured `sys` had been scribbled over.
+    auto pace_started = std::chrono::steady_clock::now();
+    auto paused_for = std::chrono::steady_clock::duration::zero();
+    std::uint64_t pace_origin_cycles = 0;
+    bool pace_origin_set = false;
     if (window_mode) {
         live = std::make_unique<Live>(sys.memory, pvr);
         live->writeback = writeback;
@@ -1822,12 +1976,18 @@ int main(int argc, char** argv) {
         // Real time, so the title runs at the speed it was written for. The guest clock is the
         // reference: sleep only while ahead of it, never speed anything up to catch up, because a
         // frame that took too long is gone and pretending otherwise makes the audio stutter.
-        const auto started = std::chrono::steady_clock::now();
+        // Fixed on the first frame the guest actually runs, not when the window opened. --load-state
+        // sets the guest clock to the state's, so a baseline taken at window creation puts the
+        // target tens of seconds in the future; the "only sleep while ahead" test below is written
+        // to ignore a gap of more than a second, so it never fires and the run sprints as if
+        // --unthrottled had been given. A resumed run then plays far too fast, which also makes it
+        // uncontrollable and starves the audio -- one cause, three symptoms.
+
         // Wall-clock time the guest was stopped for, which the pacing below owes back. Without it
-        // the run would sprint to catch up the moment the binding screen closed.
-        auto paused_for = std::chrono::steady_clock::duration::zero();
+        // the run would sprint to catch up the moment the binding screen closed. (Declared above,
+        // with the rest of the pacing state, for the lifetime reason given there.)
         auto previous_vblank = std::move(sys.spg.on_vblank_out);
-        sys.spg.on_vblank_out = [&, previous_vblank, started] {
+        sys.spg.on_vblank_out = [&, previous_vblank] {
             if (previous_vblank)
                 previous_vblank();
             if (!live->present(sys.spg.frames(), sys.ctx.cycles))
@@ -1852,10 +2012,15 @@ int main(int argc, char** argv) {
                 live->read_controls(pad_ptr->state);
             if (unthrottled)
                 return;
-            const auto guest =
-                std::chrono::duration<double>(static_cast<double>(sys.ctx.cycles) / 200e6);
+            if (!pace_origin_set) {
+                pace_origin_set = true;
+                pace_origin_cycles = sys.ctx.cycles;
+                pace_started = std::chrono::steady_clock::now();
+            }
+            const auto guest = std::chrono::duration<double>(
+                static_cast<double>(sys.ctx.cycles - pace_origin_cycles) / 200e6);
             const auto target =
-                started + paused_for +
+                pace_started + paused_for +
                 std::chrono::duration_cast<std::chrono::steady_clock::duration>(guest);
             const auto now = std::chrono::steady_clock::now();
             if (target > now && target - now < std::chrono::seconds(1))
@@ -2360,10 +2525,14 @@ int main(int argc, char** argv) {
     // name, so every event this run will ever register has to exist first -- including the
     // watchdog and the optional register sampler, which are added just above.
     bool resumed_from_state = false;
+    // The guest clock this run inherited, so the summary can report the speed this run achieved
+    // rather than dividing the guest's whole history by this run's wall clock.
+    double guest_seconds_at_start = 0.0;
     if (!load_state_path.empty()) {
         if (!read_state(load_state_path))
             return 2;
         resumed_from_state = true;
+        guest_seconds_at_start = static_cast<double>(sys.ctx.cycles) / 200e6;
     }
     const char* stop = "returned from the entry function";
     int rc = 0;
@@ -2547,7 +2716,8 @@ int main(int argc, char** argv) {
                         static_cast<double>(pcm.size() / 2) / 44100.0);
         }
     }
-    const std::string text = report_text(sys, bios, pvr, stop, host_s, bytes, cfg.link_address,
+    const std::string text = report_text(sys, bios, pvr, stop, host_s, guest_seconds_at_start,
+                                         bytes, cfg.link_address,
                                          maple, pad_ptr, card_ptr, aica, g2, sysblock, dmac);
     std::fputs(text.c_str(), stdout);
     {

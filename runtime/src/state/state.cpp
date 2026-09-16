@@ -35,6 +35,15 @@ std::string get_fixed(const std::uint8_t* p, std::size_t n) {
 }  // namespace
 
 void Writer::begin(const char* name, std::uint32_t version, std::uint32_t flags) {
+    // DREAM_STATE_TRACE=1 names each section as it starts. A save that dies inside a device's
+    // save_state leaves a stack of inlined frames that says nothing about which device it was;
+    // the last name printed does.
+    static const bool trace = std::getenv("DREAM_STATE_TRACE") != nullptr;
+    if (trace) {
+        std::fprintf(stderr, "state: writing %s (payload %zu bytes so far)\n", name,
+                     payload_.size());
+        std::fflush(stderr);
+    }
     sections_.push_back(SectionInfo{name, version, flags, payload_.size(), 0});
 }
 
