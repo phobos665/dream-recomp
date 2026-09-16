@@ -37,7 +37,11 @@ def parse_fregs(items: list[str]) -> list[int]:
         name, _, val = it.partition("=")
         n = int(name.strip().lower().lstrip("fr"))
         val = val.strip()
-        if val.endswith("f"):
+        # "0x..." is a bit pattern even when it ends in the hex digit f, which half of them do.
+        # Captured cases write bit patterns, so the trailing-f rule alone rejected every third one.
+        if val.lower().startswith(("0x", "-0x")):
+            fr[n] = int(val, 16) & 0xFFFFFFFF
+        elif val.endswith("f"):
             fr[n] = struct.unpack("<I", struct.pack("<f", float(val[:-1])))[0]
         else:
             fr[n] = int(val, 0) & 0xFFFFFFFF

@@ -1134,6 +1134,7 @@ void usage(const char* argv0, std::FILE* out) {
         "  --capture-out PREFIX   where those go (default: capture); writes PREFIX.N.ram.bin (16 MB\n"
         "                         each) and PREFIX.cases.json\n"
         "  --capture-count N      capture the first N entries rather than just the first\n"
+        "  --capture-if-bad rN[,rN]  capture only a call whose rN already holds a bogus pointer\n"
         "  --validation           turn on Vulkan validation layers\n"
         "  --framebuffer-writeback  write rendered frames back into video memory\n",
         argv0);
@@ -1347,7 +1348,7 @@ int main(int argc, char** argv) {
     std::string replay_only;
     // --capture-entry: the inputs of a real call, for a function the replay cannot compare because
     // it does not return inside the journal's bound. See runtime/include/.../replay.h.
-    std::string capture_entry, capture_out = "capture";
+    std::string capture_entry, capture_out = "capture", capture_if_bad;
     unsigned capture_count = 1;
     // Logging is on unless refused. A windowed session scrolls its terminal away, and a run that
     // dies takes the fault line with it -- which is the one line worth having. A log costs a file.
@@ -1460,6 +1461,8 @@ int main(int argc, char** argv) {
             capture_out = argv[++i];
         else if (!std::strcmp(argv[i], "--capture-count") && i + 1 < argc)
             capture_count = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
+        else if (!std::strcmp(argv[i], "--capture-if-bad") && i + 1 < argc)
+            capture_if_bad = argv[++i];
         else if (!std::strcmp(argv[i], "--write-log-range") && i + 1 < argc) {
             const char* spec = argv[++i];
             log_from = std::strtoull(spec, nullptr, 0);
@@ -2070,6 +2073,14 @@ int main(int argc, char** argv) {
                 break;
             replay.capture.push_back(static_cast<std::uint32_t>(v));
             p = (*end == ',') ? end + 1 : end;
+        }
+        for (const char* p = capture_if_bad.c_str(); *p;) {
+            if (*p == 'r' || *p == ',') { ++p; continue; }
+            char* end = nullptr;
+            const unsigned long n = std::strtoul(p, &end, 10);
+            if (end == p) break;
+            replay.capture_if_bad.push_back(static_cast<unsigned>(n));
+            p = end;
         }
         replay.capture_prefix = capture_out;
         replay.capture_limit = capture_count;

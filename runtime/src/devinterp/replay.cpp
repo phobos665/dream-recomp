@@ -56,8 +56,18 @@ void Replay::enter(std::uint32_t function, std::uint32_t assumed_mode) {
         }
     }
     if (!capture.empty() && !replaying_ && captured < capture_limit &&
-        std::find(capture.begin(), capture.end(), function) != capture.end())
-        capture_entry(function);
+        std::find(capture.begin(), capture.end(), function) != capture.end()) {
+        bool take = capture_if_bad.empty();
+        for (unsigned n : capture_if_bad) {
+            const std::uint32_t v = ctx_.r[n & 15];
+            // Big enough to be meant as an address, but not one: every RAM alias of area 3 has
+            // 0x0C000000 in those bits, so a value that misses it is not a pointer into anything.
+            if (v >= 0x01000000u && (v & 0x1C000000u) != 0x0C000000u)
+                take = true;
+        }
+        if (take)
+            capture_entry(function);
+    }
     return enter_impl(function);
 }
 

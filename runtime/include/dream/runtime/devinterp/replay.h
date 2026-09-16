@@ -84,6 +84,13 @@ public:
     // the real run was in. No journal is held and nothing is undone, so the length of the function
     // stops mattering.
     std::vector<std::uint32_t> capture;
+    // Capture only a call that arrives already broken. The first calls to a function are usually
+    // the healthy ones -- three captured from Crazy Taxi's 0x0C07B760 all held good pointers and
+    // all matched the interpreter -- and capturing every call is not an option at 16 MB each. So
+    // name the argument registers that must hold pointers: a call is captured only when one of them
+    // holds something too large to be a count and too wrong to be an address, which is exactly the
+    // shape of the float bit patterns this fault puts in them.
+    std::vector<unsigned> capture_if_bad;
     std::string capture_prefix;
     unsigned capture_limit = 1;
     unsigned captured = 0;

@@ -37,6 +37,16 @@ if(EXISTS ${_ct_image})
     "ct_14a404|${_ct_image}|0x0c010000|0x0c14a404:0x0c14a4f8:ct_14a404"
     "ct_077ad0|${_ct_image}|0x0c010000|0x0c077ad0:0x0c077ae8:ct_077ad0"
     "fn_0c07b760|${_ct_image}|0x0c010000|0x0c07b760:0x0c07c478:fn_0c07b760"
+    "fn_0c07b8a0|${_ct_image}|0x0c010000|0x0c07b8a0:0x0c07b90a:fn_0c07b8a0"
+    "fn_0c0761c0|${_ct_image}|0x0c010000|0x0c0761c0:0x0c0761d8:fn_0c0761c0"
+    "fn_0c07b918|${_ct_image}|0x0c010000|0x0c07b918:0x0c07b966:fn_0c07b918"
+    "fn_0c07baf0|${_ct_image}|0x0c010000|0x0c07baf0:0x0c07bc12:fn_0c07baf0"
+    "fn_0c07bf30|${_ct_image}|0x0c010000|0x0c07bf30:0x0c07bf70:fn_0c07bf30"
+    "fn_0c07c120|${_ct_image}|0x0c010000|0x0c07c120:0x0c07c124:fn_0c07c120"
+    "fn_0c07bf70|${_ct_image}|0x0c010000|0x0c07bf70:0x0c07bf9a:fn_0c07bf70"
+    "fn_0c07c340|${_ct_image}|0x0c010000|0x0c07c340:0x0c07c3dc:fn_0c07c340"
+    "fn_0c07bc20|${_ct_image}|0x0c010000|0x0c07bc20:0x0c07c3fc:fn_0c07bc20"
+    "fn_0c07c130|${_ct_image}|0x0c010000|0x0c07c130:0x0c07c314:fn_0c07c130"
     "ct_14b860|${_ct_image}|0x0c010000|0x0c14b860:0x0c14b8d0:ct_14b860"
   )
 endif()
