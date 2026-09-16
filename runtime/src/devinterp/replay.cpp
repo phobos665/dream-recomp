@@ -112,7 +112,14 @@ void Replay::capture_entry(std::uint32_t function) {
                      k, cap.function);
         std::fprintf(j, "  \"image\": \"%s\", \"base\": \"0x0c000000\", \"entry\": \"0x%08x\",\n",
                      cap.ram_path.c_str(), cap.function);
-        std::fprintf(j, "  \"fpscr\": \"0x%08x\",\n", cap.ctx.fpscr);
+        // PR says who called this, which for a function reached through a pointer is the only way
+        // to know. The rest are here because a capture is a whole machine state or it is guesswork.
+        std::fprintf(j,
+                     "  \"fpscr\": \"0x%08x\", \"pr\": \"0x%08x\", \"sr\": \"0x%08x\",\n"
+                     "  \"gbr\": \"0x%08x\", \"vbr\": \"0x%08x\", \"mach\": \"0x%08x\","
+                     " \"macl\": \"0x%08x\", \"fpul\": \"0x%08x\",\n",
+                     cap.ctx.fpscr, cap.ctx.pr, cap.ctx.sr, cap.ctx.gbr, cap.ctx.vbr, cap.ctx.mach,
+                     cap.ctx.macl, cap.ctx.fpul);
         std::fprintf(j, "  \"regs\": {");
         for (int i = 0; i < 16; ++i)
             std::fprintf(j, "%s\"r%d\": \"0x%08x\"", i ? ", " : "", i, cap.ctx.r[i]);
