@@ -419,6 +419,7 @@ void Aica::save_state(state::Writer& w) {
     for (int v : timer_left_) w.u32(static_cast<std::uint32_t>(v));
     w.u64(samples);
     arm.save_state(w);
+    mixer.save_dsp_state(w);
 }
 
 void Aica::load_state(state::Reader& r) {
@@ -433,7 +434,13 @@ void Aica::load_state(state::Reader& r) {
     // the channels it was part-way through and re-derives the ring buffer from what was restored.
     // Without this it kept cursors into sound RAM that no longer says what it did -- audible as
     // crackling -- and left the DSP pointed at the bottom of sound RAM, on top of the ARM7's code.
+    // Order matters: resync first, so RBP/RBL come from the restored registers, then the DSP's
+    // own working state on top -- MDEC_CT especially, which is where in the delay line the effects
+    // path is reading and writing. Losing it left the reverb reading from the wrong offset, which
+    // is audible as a hollow, phasey version of the right sound rather than as silence.
     mixer.resync_after_load();
+    if (r.section_version() >= 2)
+        mixer.load_dsp_state(r);
     update_arm_interrupts();
     update_sh4_interrupts();
 }

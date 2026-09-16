@@ -3,6 +3,8 @@
 // fixed tables (mixer_tables.inc), no CDDA/MIDI/VMU-beep inputs, and members instead of globals.
 #include "dream/runtime/aica/mixer.h"
 
+#include "dream/runtime/state/state.h"
+
 #include <algorithm>
 #include <cstring>
 
@@ -846,6 +848,20 @@ void Mixer::resync_after_load() {
     ring_buffer_written();
     dsp_.dirty = true;
     dsp_.stopped = false;
+}
+
+void Mixer::save_dsp_state(state::Writer& w) const {
+    for (std::int32_t v : dsp_.TEMP) w.u32(static_cast<std::uint32_t>(v));
+    for (std::int32_t v : dsp_.MEMS) w.u32(static_cast<std::uint32_t>(v));
+    for (std::int32_t v : dsp_.MIXS) w.u32(static_cast<std::uint32_t>(v));
+    w.u32(dsp_.MDEC_CT);
+}
+
+void Mixer::load_dsp_state(state::Reader& r) {
+    for (std::int32_t& v : dsp_.TEMP) v = static_cast<std::int32_t>(r.u32());
+    for (std::int32_t& v : dsp_.MEMS) v = static_cast<std::int32_t>(r.u32());
+    for (std::int32_t& v : dsp_.MIXS) v = static_cast<std::int32_t>(r.u32());
+    dsp_.MDEC_CT = r.u32();
 }
 
 void Mixer::channel_reg_written(unsigned channel, unsigned reg, unsigned size) {

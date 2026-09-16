@@ -14,6 +14,11 @@
 #include <cstdint>
 #include <functional>
 
+namespace dream::state {
+class Writer;
+class Reader;
+}  // namespace dream::state
+
 namespace dream::aica {
 
 class Mixer {
@@ -29,6 +34,11 @@ public:
     // that is the ARM7's own code, and the sound CPU executes 1,994 undefined instructions. So
     // re-derive the ring buffer from the restored registers afterwards, never before.
     void resync_after_load();
+    // The DSP's working state: the delay-line cursor and the three register files it carries
+    // between samples. Pure data, unlike Channel, which holds pointers back into the mixer and the
+    // register block and cannot be restored by copying.
+    void save_dsp_state(state::Writer& w) const;
+    void load_dsp_state(state::Reader& r);
 
     // A write landed in channel `channel`'s 0x80-byte slot at byte offset `reg` (size 1 or 2).
     void channel_reg_written(unsigned channel, unsigned reg, unsigned size);

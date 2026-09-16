@@ -2140,7 +2140,7 @@ int main(int argc, char** argv) {
         pvr.save_state(w);
         w.begin("maple", 2);
         maple.save_state(w);
-        w.begin("aica");
+        w.begin("aica", 2);  // 2: carries the DSP working state (MDEC_CT and the register files)
         aica.save_state(w);
         w.begin("rtc");
         aica_rtc.save_state(w);
