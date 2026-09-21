@@ -1,0 +1,59 @@
+# TONY HAWKS PRO SKATER 2, T13006N. A second in-tree reference title: Crazy Taxi alone was enough
+# to tune the tool to Crazy Taxi, which is how the boot stack pointer stayed wrong for so long
+# (docs/boot-state.md). Everything here is read off the disc or came from --suggest-config.
+
+[game]
+id = "tonyhawksproskater2"
+title = "Tony Hawk's Pro Skater 2"
+region = "USA"
+product = "T13006N"
+
+[disc]
+image = "../Tony Hawk's Pro Skater 2.chd"   # the owner's dump, gitignored
+
+[binary]
+path = "extracted/fs/1ST_READ.BIN"          # written by `dcdisc extract`, gitignored
+load_address = 0x8C010000
+link_address = 0x0C010000
+entry = 0x8C010000
+
+# The SH-4 exception vectors, copied into RAM by the startup code and run from there. Found by
+# --suggest-config; the same four-vector shape Rayman 2 has, which is the Katana startup's.
+[[relocations]]
+source = 0x0C047E7C
+size = 0x34
+dest = 0x8C000000
+entries = [0x8C000000]
+
+[[relocations]]
+source = 0x0C047DE8
+size = 0x34
+dest = 0x8C000100
+entries = [0x8C000100]
+
+[[relocations]]
+source = 0x0C047DE8
+size = 0x34
+dest = 0x8C000400
+entries = [0x8C000400]
+
+[[relocations]]
+source = 0x0C047E20
+size = 0x58
+dest = 0x8C000600
+entries = [0x8C000600]
+
+# A 220-byte routine the game copies below the stack top and runs there. Found by
+# --suggest-config on the 120-frame run.
+[[relocations]]
+source = 0x0C0540A8
+size = 0xDC
+dest = 0x8C00F1C4
+entries = [0x8C00F1C4]
+
+[functions]
+pointers = true
+sweep = true
+extra = [0x0C075860, 0x0C100D20, 0x0C126A20,
+         0x0C122BC0, 0x0C122C00,
+         0x0C05AAB0, 0x0C122BE0, 0x0C122C20]  # reached at run time, discovery had not found them
