@@ -264,6 +264,41 @@ ADR 16 requires `-ffp-contract=off` and golden traces that match bit-for-bit acr
 ARM64. Any optimisation that changes floating-point results is not a trade to weigh, it is out of
 scope, and the golden replay is what proves it.
 
+## The translated/interpreted divergence, narrowed
+
+Measured 2026-09-21. Crazy Taxi, 20 guest seconds, `--rtc-seed 1`, write hash per frame:
+
+| | translated | interpreted |
+| --- | --- | --- |
+| frame 0 | `15d7c09af14c49e5` | `15d7c09af14c49e5` |
+| frame 1 | `4a879c6f98e97588` | `830a5ed018e97588` |
+
+Frame 0 agrees. Frame 1 diverges with **identical cycle count (3,342,993) and identical write
+count (147,787)** -- so this is not a control-flow difference or a missing store. The same
+instructions run and the same number of writes happen; one or more carry different *content*.
+
+Then the differential harness, on a tree built with `--replay-hooks`:
+
+```
+replay: 153450465 calls compared, 239006 skipped
+        (device writes 236335, interrupts 2613, non-local returns 18, too long 40),
+        0 disagreements
+replay: 0 calls entered in a floating-point mode the emitter did not compile for
+```
+
+**A hundred and fifty-three million function calls, zero disagreements.** The emitter's pure
+computation is not the problem, and neither is FPSCR mode inference.
+
+That leaves the 239,006 calls the harness *cannot* compare, and they are 99% device writes -- a
+function that writes to a device cannot simply be re-run against the interpreter, because the
+second run would repeat the side effect. So the divergence is in, or downstream of, code that
+touches hardware.
+
+Which is a useful place to be: it excludes the emitter's arithmetic across the whole title and
+points at the device models or their timing. What it does not do is name the write, because the
+one instrument that could -- an ordered write stream with the writing PC attached -- is the thing
+we do not have. See `flycast-redux-review.md`; this is the first problem that tool is for.
+
 ## Not in this plan
 
 Enhancements -- widescreen, frame generation, anti-aliasing, the VMU screen -- live in
