@@ -250,7 +250,8 @@ private:
                         } else {
                             // BRAF with no table recovered. Unlike JMP above there is no constant
                             // fallback, so the target is lost even when it could be traced --
-                            // measured at 351 of 642 sites across the corpus (corpus-scan-findings).
+                            // measured at 351 of 642 sites across the corpus
+                            // (corpus-scan-findings).
                             note_unresolved(pc, entry, "BRAF", kReasonNoTable);
                         }
                         stop = true;
@@ -487,8 +488,8 @@ std::string to_json(const DiscoverResult& r, const Image& image) {
     for (std::size_t i = 0; i < r.unresolved.size(); ++i) {
         const auto& u = r.unresolved[i];
         o << "    {\"address\": \"" << hex(u.address) << "\", \"op\": \"" << u.op
-          << "\", \"in_function\": \"" << hex(u.in_function) << "\", \"reason\": \""
-          << u.reason << "\"}" << (i + 1 < r.unresolved.size() ? "," : "") << "\n";
+          << "\", \"in_function\": \"" << hex(u.in_function) << "\", \"reason\": \"" << u.reason
+          << "\"}" << (i + 1 < r.unresolved.size() ? "," : "") << "\n";
     }
     o << "  ]\n}\n";
     return o.str();
