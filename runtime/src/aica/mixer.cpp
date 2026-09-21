@@ -727,7 +727,11 @@ struct Mixer::Channel {
                 update_stream_step();
                 if (offset == 0 || size == 2)
                     update_sa();
-                if ((offset == 1 || size == 2) && ccd->KYONEX) {
+                // KYONEX is bit 15 of the first 16-bit register, so byte 1. Any write that
+                // covers that byte arms the key-on, and the ARM7 sound drivers write the pair as
+                // one 32-bit store: offset 0 with size 4, which "offset == 1 || size == 2" missed
+                // and so no channel ever keyed on (docs/runtime-aica.md).
+                if (offset <= 1 && offset + size > 1 && ccd->KYONEX) {
                     ccd->KYONEX = 0;
                     for (unsigned i = 0; i < 64; ++i) {
                         Channel& ch = mixer->chans_[i];

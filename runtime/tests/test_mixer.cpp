@@ -78,6 +78,28 @@ TEST_CASE("mixer: a keyed-on looping PCM channel sounds, then releases to silenc
     CHECK(r.aica.last_right == 0);
 }
 
+TEST_CASE("mixer: a 32-bit write to the first register keys on, as the ARM7 drivers do") {
+    // KYONEX is bit 15 of the first 16-bit register, so byte 1. The ARM7 sound drivers in Rayman
+    // 2, Tony Hawk's Pro Skater 2 and Metropolis Street Racer all write the register pair as one
+    // 32-bit store at offset 0, which a "size == 2" test misses: no channel ever keyed on and
+    // every title was silent.
+    Rig r;
+    r.square_wave(0x1000, 64, 8000);
+    r.program_channel(0x1000, 64);
+    r.w(0x00, r.ctrl | (1u << 14) | (1u << 15), 4);  // KYONB | KYONEX, one 32-bit store
+    CHECK(r.aica.mixer.key_ons == 1);
+    CHECK(r.aica.mixer.active_channels() == 1);
+    int peak = 0;
+    for (int i = 0; i < 4000; ++i) {
+        r.aica.sample_tick();
+        peak = std::max(peak, std::abs(static_cast<int>(r.aica.last_left)));
+    }
+    CHECK(peak > 1000);
+    // A one-byte write to byte 0 does not reach KYONEX and must not key anything on or off.
+    r.w(0x00, r.ctrl | (1u << 14) | (1u << 15), 1);
+    CHECK(r.aica.mixer.key_ons == 1);
+}
+
 TEST_CASE("mixer: pan moves the signal between the channels") {
     Rig r;
     r.square_wave(0x1000, 64, 8000);
