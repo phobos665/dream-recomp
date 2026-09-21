@@ -163,7 +163,11 @@ void Bios::setup_boot(std::uint32_t boot_addr) {
 }
 
 void Bios::write_sector(::dream::Memory& m, std::uint32_t dest, const std::uint8_t* data) {
-    if ((dest & 0x1C000000u) == 0x0C000000u) {
+    // The fast path below memcpys straight into the RAM buffer, so it bypasses DcMemory::store
+    // and everything watching it. With an instrument armed take the slow path instead: otherwise
+    // a sector landing in RAM is invisible to the write hash while the same sector landing
+    // anywhere else is not, and the asymmetry is in the GD-ROM path we are trying to measure.
+    if ((dest & 0x1C000000u) == 0x0C000000u && !sys_.memory.tracing_writes()) {
         std::memcpy(sys_.memory.ram() + (dest & (mem::DcMemory::kRamSize - 1)), data, 2048);
         return;
     }

@@ -161,6 +161,23 @@ public:
         write_hash = (write_hash ^ size) * kPrime;
         ++writes_hashed;
     }
+    // True when either the hash or the watch is armed, so the cold paths can skip the per-word
+    // loop entirely.
+    bool tracing_writes() const noexcept {
+        return hash_writes || (on_watch_write && watch_lo < watch_hi);
+    }
+    // Every path that writes guest RAM reports through here, not just DcMemory::store. The hash
+    // and the watch were originally wired into the store path alone, which left store-queue
+    // bursts invisible to both: a run could differ from another in 32 bytes at a time and the
+    // write hash would call the two identical. Anything that memcpys into `t.bytes` must call
+    // this (docs/write-coverage.md).
+    void note_ram_write(std::uint32_t addr, std::uint64_t value, unsigned size) noexcept {
+        if (hash_writes)
+            note_write(addr, value, size);
+        if ((addr & 0x1FFFFFFFu) >= watch_lo && (addr & 0x1FFFFFFFu) < watch_hi && on_watch_write)
+            on_watch_write(addr, static_cast<std::uint32_t>(value), size);
+    }
+
     // Development aid: an access to an address that is in no region at all, called before it is
     // recorded in the fault log. The *first* one is where a run started going wrong; every access
     // after it is the guest following whatever garbage the first one returned, so catching it here
