@@ -52,3 +52,18 @@ so the two never match and the column is noise on that side. `pr` is meaningful 
 Binary search on `FROM` until the window straddles the first difference, or dump one large window
 and stream-compare. The first differing line is the answer, and the interpreter's `pc` on that
 line says where it was.
+
+## `trace_return`'s `r15` is post-delay-slot
+
+`DREAM_TRACE_RETURNS` logs from the interpreter's `Flow::Ret` case, which runs after the delay
+slot. The branch's operands — target, condition, `PR` for calls — are read *before* the slot, but
+the registers in the logged line are read *after* it. An `rts` whose delay slot pops a register
+therefore shows an `r15` one slot further on than the instruction listing suggests.
+
+This cost real time on Rayman 2: reading `pr` from `r15 - 8` instead of `r15 - 12` put it on the
+wrong stack word and produced an apparent contradiction between the return trace and the write
+watch that stood for several commits. Both were correct.
+
+When recovering stack slots from a return trace, check **every** register the epilogue restores,
+not one. An off-by-one slot still matches the register next to it, so a single agreeing value
+confirms nothing; the full set only lines up at the right offset.
