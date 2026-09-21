@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <sstream>
 
 #include "dream/translator/analysis/constprop.h"
@@ -45,6 +46,10 @@ public:
         r.pointer_accepted = pointer_accepted_;
         r.switches = switches_;
         r.switch_sites.assign(switch_sites_.begin(), switch_sites_.end());
+        for (const auto& [addr, u] : unresolved_) {
+            (void)addr;
+            r.unresolved.push_back(u);
+        }
         r.notes = notes_;
         return r;
     }
@@ -160,7 +165,11 @@ private:
                     }
                     case Op::JSR: {
                         std::uint32_t t;
-                        if (constant_in(block_start, pc, ins.m, t) && in_image(normalise(t)))
+                        if (!constant_in(block_start, pc, ins.m, t))
+                            note_unresolved(pc, entry, "JSR", kReasonNoConstant);
+                        else if (!in_image(normalise(t)))
+                            note_unresolved(pc, entry, "JSR", kReasonOutOfImage);
+                        else
                             calls.push_back(normalise(t));
                         break;
                     }
@@ -179,8 +188,17 @@ private:
                             }
                         } else if (ins.op == Op::JMP) {
                             std::uint32_t t;
-                            if (constant_in(block_start, pc, ins.m, t) && in_image(normalise(t)))
+                            if (!constant_in(block_start, pc, ins.m, t))
+                                note_unresolved(pc, entry, "JMP", kReasonNoConstant);
+                            else if (!in_image(normalise(t)))
+                                note_unresolved(pc, entry, "JMP", kReasonOutOfImage);
+                            else
                                 calls.push_back(normalise(t));
+                        } else {
+                            // BRAF with no table recovered. Unlike JMP above there is no constant
+                            // fallback, so the target is lost even when it could be traced --
+                            // measured at 351 of 642 sites across the corpus (corpus-scan-findings).
+                            note_unresolved(pc, entry, "BRAF", kReasonNoTable);
                         }
                         stop = true;
                         break;
@@ -188,8 +206,11 @@ private:
                     case Op::BSRF: {
                         // Position-independent call (SHC): target = literal + pc + 4.
                         std::uint32_t t;
-                        if (constant_in(block_start, pc, ins.m, t) &&
-                            in_image(normalise(pc + 4 + t)))
+                        if (!constant_in(block_start, pc, ins.m, t))
+                            note_unresolved(pc, entry, "BSRF", kReasonNoConstant);
+                        else if (!in_image(normalise(pc + 4 + t)))
+                            note_unresolved(pc, entry, "BSRF", kReasonOutOfImage);
+                        else
                             calls.push_back(normalise(pc + 4 + t));
                         break;
                     }
@@ -337,6 +358,13 @@ private:
     std::set<std::uint32_t> slots_;  // delay slots of every walked branch
     std::size_t pointer_candidates_ = 0, pointer_accepted_ = 0, switches_ = 0;
     std::set<std::uint32_t> switch_sites_;
+    // Keyed by address so a site walked more than once -- functions can share tails -- is recorded
+    // once rather than per visit.
+    std::map<std::uint32_t, UnresolvedIndirect> unresolved_;
+
+    void note_unresolved(std::uint32_t pc, std::uint32_t fn, const char* op, const char* reason) {
+        unresolved_.emplace(pc, UnresolvedIndirect{pc, fn, op, reason});
+    }
     std::vector<std::string> notes_;
 };
 
@@ -361,7 +389,17 @@ std::string to_json(const DiscoverResult& r, const Image& image) {
     o << "  ],\n  \"switch_sites\": [";
     for (std::size_t i = 0; i < r.switch_sites.size(); ++i)
         o << (i ? ", " : "") << "\"" << hex(r.switch_sites[i]) << "\"";
-    o << "]\n}\n";
+    // Every control transfer through a register whose target could not be established. This is the
+    // measurable form of a discovery gap: a heuristic is worth writing when it shortens this list,
+    // and worth keeping when it shortens it without changing behaviour.
+    o << "],\n  \"unresolved_indirect\": [\n";
+    for (std::size_t i = 0; i < r.unresolved.size(); ++i) {
+        const auto& u = r.unresolved[i];
+        o << "    {\"address\": \"" << hex(u.address) << "\", \"op\": \"" << u.op
+          << "\", \"in_function\": \"" << hex(u.in_function) << "\", \"reason\": \""
+          << u.reason << "\"}" << (i + 1 < r.unresolved.size() ? "," : "") << "\n";
+    }
+    o << "  ]\n}\n";
     return o.str();
 }
 

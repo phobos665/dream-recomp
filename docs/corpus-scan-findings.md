@@ -84,11 +84,50 @@ propagation, and there is no way from the outside to count how often that succee
 it could not establish, with the opcode and the containing function. That turns this scan from
 inference into measurement, makes every later heuristic gradable, and is perhaps a day's work.
 
+## Measured, once `discover` reported it
+
+The instrumentation landed and every inference above about *which* sites are unresolved turned out
+to be wrong. Measured across the corpus, by the translator rather than by decoding from outside:
+
+| Title | unresolved | JSR | JMP | BRAF | BSRF |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Street Fighter III | 3744 | 3513 | 226 | 1 | 4 |
+| Dino Crisis | 3688 | 3015 | 665 | 1 | 7 |
+| techromancer | 2585 | 2452 | 128 | 0 | 5 |
+| Tony Hawk's Pro Skater 2 | 2511 | 2265 | 90 | **156** | 0 |
+| Rayman 2 | 2356 | 2263 | 91 | 0 | 2 |
+| Crazy Taxi | 2228 | 2145 | 76 | 2 | 5 |
+| AeroWings | 1445 | 1355 | 87 | 0 | 3 |
+| Metropolis Street Racer | 790 | 715 | 75 | 0 | 0 |
+| **Total** | **19347** | **17723** | **1438** | **160** | **26** |
+
+**`JSR` through a register constant propagation cannot trace is 91% of every unresolved site**, and
+`no_constant` is the reason for all but a handful. Everything else is a rounding error beside it.
+
+Three specific corrections to the section above, all in the same direction -- inference from outside
+the translator was confidently wrong:
+
+- **`BRAF` is 160 sites, not 351**, and 156 of those are Tony Hawk's alone. Adding the constant
+  fallback `JMP` has would fix **two sites** in Crazy Taxi. It was proposed here as "the single
+  clearest gap the corpus shows" and it is worth almost nothing.
+- **`BSRF` is 26 sites, not 2048.** Constant propagation handles it comfortably. The earlier figure
+  came from measuring against `switch_sites`, which `BSRF` can never appear in.
+- The per-title `BRAF` resolution spread, and the conclusion drawn from it about toolchains
+  predicting discovery effort, was measuring noise.
+
 ## Revised order
 
-1. **Report unresolved indirect sites from `discover`** -- 1 day. Everything else is guesswork
-   without it.
-2. **Re-run the scan** and rank the real gaps.
-3. **The `BRAF` constant-propagation fallback** -- small, and the clearest gap visible today.
-4. Then the ported heuristics from `dreamcastrecompiled-review.md`, in whatever order step 2 says,
-   rather than the order that review guessed.
+1. ~~Report unresolved indirect sites~~ -- done, and it rewrote everything below it.
+2. **Indirect calls whose target constant propagation cannot trace** -- 91% of the problem, 17,723
+   sites, present in every title. The `dreamcastrecompiled-review.md` heuristic that matters is the
+   second one, branch-selected literals: two callbacks chosen by a conditional branch and joined at
+   one `jsr`, where straight-line propagation can only ever see the later of the two. How much of
+   the 91% has that shape is the next thing to measure, not assume -- group the `JSR` sites by the
+   instruction pattern that precedes them before writing anything.
+3. **`JMP`**, 1,438 sites, 7%. The SDK veneer patterns are the relevant heuristic.
+4. **`BRAF`**, 160 sites. Almost entirely Tony Hawk's, so worth doing when that title matters and
+   not before. The byte jump table is the relevant heuristic, and it is the one this project would
+   have ported first on the strength of the review alone.
+
+The order the review guessed was exactly backwards. That is the argument for instrumenting before
+porting, and it cost a day.
