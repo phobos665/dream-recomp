@@ -371,6 +371,7 @@ wrong.
 | where functions begin and end | `build/games/<id>/gen/<id>.functions.json` |
 | where the guest is spending its time | `--sample N --sample-file FILE` -- a CPU sampler, one line per N cycles: `cycles pc r15 r10 sr pr` |
 | whether translated and interpreted agree | `--replay` -- **see the warnings below** |
+| whether your evidence carries your claim | the table in "What a claim needs before you make it" |
 
 **`--replay` can suppress the fault you are chasing.** Measured on a title whose driven run faults
 with 79,615,125 unmapped accesses: the same run under `--replay` reported 2, and stopped somewhere
