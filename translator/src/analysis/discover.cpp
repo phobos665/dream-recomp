@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <sstream>
 
 #include "dream/translator/analysis/constprop.h"
@@ -45,6 +46,10 @@ public:
         r.pointer_accepted = pointer_accepted_;
         r.switches = switches_;
         r.switch_sites.assign(switch_sites_.begin(), switch_sites_.end());
+        for (const auto& [addr, u] : unresolved_) {
+            (void)addr;
+            r.unresolved.push_back(u);
+        }
         r.notes = notes_;
         return r;
     }
@@ -91,6 +96,41 @@ private:
         return true;
     }
 
+    // Every constant `reg` can hold at `pc`, following the graph back when the block itself does
+    // not build it. False means "unknown on at least one path", which must not be confused with
+    // "no targets": an unknown path can carry anything, so nothing may be seeded from it.
+    //
+    // Bounded three ways, because discovery runs this at thousands of sites: a visited set makes
+    // loops terminate, a depth cap stops a long chain costing more than it returns, and a limit on
+    // the number of distinct values keeps a jump-table-like merge from exploding.
+    bool reaching_constants(std::uint32_t block, std::uint32_t pc, unsigned reg,
+                            const std::map<std::uint32_t, std::set<std::uint32_t>>& preds,
+                            const std::map<std::uint32_t, std::uint32_t>& block_end,
+                            std::uint32_t entry, std::set<std::uint32_t>& out,
+                            unsigned depth = 0) const {
+        constexpr unsigned kMaxDepth = 16, kMaxValues = 8;
+        if (depth > kMaxDepth || out.size() > kMaxValues)
+            return false;
+        // Built here? Then the predecessors cannot matter: this block's own definition wins.
+        if (const auto v = constant_at(img_, block, pc, reg, true)) {
+            out.insert(*v);
+            return true;
+        }
+        const auto pit = preds.find(block);
+        if (pit == preds.end() || pit->second.empty())
+            return false;  // live in at the function entry: the caller decides, not us
+        for (std::uint32_t p : pit->second) {
+            if (p == block || p < entry)
+                return false;  // a self-loop or an edge from outside: give up rather than guess
+            const auto eit = block_end.find(p);
+            if (eit == block_end.end())
+                return false;
+            if (!reaching_constants(p, eit->second, reg, preds, block_end, entry, out, depth + 1))
+                return false;
+        }
+        return true;
+    }
+
     // Recursive descent inside one function: collects its reachable blocks, records call
     // targets as new function seeds, and returns the function extent.
     void analyse_function(std::uint32_t entry, const std::string& origin) {
@@ -101,6 +141,21 @@ private:
         std::vector<std::uint32_t> calls;
         std::vector<std::uint32_t> tail_jumps;  // BRA out of the function body
         std::set<std::uint32_t> slots;          // delay-slot addresses: never instruction starts
+        // The function's control-flow graph, built as the walk discovers it. Constant propagation
+        // is block-local, so a callback loaded in one block and called in a later one cannot be
+        // seen; these let a second pass ask the predecessors. Edges are recorded even when the
+        // target was already visited, because the edge exists either way.
+        std::map<std::uint32_t, std::set<std::uint32_t>> preds;
+        std::map<std::uint32_t, std::uint32_t> block_end;
+        // Indirect transfers the block-local answer could not resolve, retried after the walk
+        // when the graph is complete.
+        struct Pending {
+            std::uint32_t pc, block, fn;
+            unsigned reg;
+            const char* op;
+            bool pc_relative;  // BSRF: the constant is an offset from pc + 4
+        };
+        std::vector<Pending> pending;
         while (!work.empty()) {
             std::uint32_t pc = work.back();
             work.pop_back();
@@ -135,6 +190,7 @@ private:
                             else {
                                 work.push_back(t);
                                 block_starts.insert(t);
+                                preds[t].insert(block_start);
                             }
                         }
                         break;
@@ -147,6 +203,7 @@ private:
                             else {
                                 work.push_back(t);
                                 block_starts.insert(t);
+                                preds[t].insert(block_start);
                             }
                         }
                         stop = true;
@@ -160,7 +217,11 @@ private:
                     }
                     case Op::JSR: {
                         std::uint32_t t;
-                        if (constant_in(block_start, pc, ins.m, t) && in_image(normalise(t)))
+                        if (!constant_in(block_start, pc, ins.m, t))
+                            pending.push_back({pc, block_start, entry, ins.m, "JSR", false});
+                        else if (!in_image(normalise(t)))
+                            note_unresolved(pc, entry, "JSR", kReasonOutOfImage);
+                        else
                             calls.push_back(normalise(t));
                         break;
                     }
@@ -176,11 +237,22 @@ private:
                             for (std::uint32_t t : sw.targets) {  // local cases
                                 work.push_back(t);
                                 block_starts.insert(t);
+                                preds[t].insert(block_start);
                             }
                         } else if (ins.op == Op::JMP) {
                             std::uint32_t t;
-                            if (constant_in(block_start, pc, ins.m, t) && in_image(normalise(t)))
+                            if (!constant_in(block_start, pc, ins.m, t))
+                                pending.push_back({pc, block_start, entry, ins.m, "JMP", false});
+                            else if (!in_image(normalise(t)))
+                                note_unresolved(pc, entry, "JMP", kReasonOutOfImage);
+                            else
                                 calls.push_back(normalise(t));
+                        } else {
+                            // BRAF with no table recovered. Unlike JMP above there is no constant
+                            // fallback, so the target is lost even when it could be traced --
+                            // measured at 351 of 642 sites across the corpus
+                            // (corpus-scan-findings).
+                            note_unresolved(pc, entry, "BRAF", kReasonNoTable);
                         }
                         stop = true;
                         break;
@@ -188,8 +260,11 @@ private:
                     case Op::BSRF: {
                         // Position-independent call (SHC): target = literal + pc + 4.
                         std::uint32_t t;
-                        if (constant_in(block_start, pc, ins.m, t) &&
-                            in_image(normalise(pc + 4 + t)))
+                        if (!constant_in(block_start, pc, ins.m, t))
+                            pending.push_back({pc, block_start, entry, ins.m, "BSRF", true});
+                        else if (!in_image(normalise(pc + 4 + t)))
+                            note_unresolved(pc, entry, "BSRF", kReasonOutOfImage);
+                        else
                             calls.push_back(normalise(pc + 4 + t));
                         break;
                     }
@@ -203,9 +278,47 @@ private:
                     default:
                         break;
                 }
-                pc = next;
-                if (stop)
+                if (stop) {
+                    block_end[block_start] = next;
                     break;
+                }
+                // A conditional branch continues into the instruction after it, which the target
+                // side has already been recorded as reaching: that fallthrough is an edge too.
+                if (ins.op == Op::BT || ins.op == Op::BF || ins.op == Op::BT_S ||
+                    ins.op == Op::BF_S)
+                    preds[next].insert(block_start);
+                pc = next;
+            }
+            // A block that ran into already-visited code ends where it stopped.
+            if (!block_end.count(block_start))
+                block_end[block_start] = pc;
+        }
+        // Second pass: the graph is complete now, so ask the predecessors about everything the
+        // block-local answer could not resolve.
+        //
+        // A register live into a block holds whatever its predecessors left there. Where they all
+        // agree on one literal that is the value; where they disagree, every one of them is still
+        // a real call target reached on a real path, so discovery takes the union rather than
+        // giving up -- SHC picks between two callbacks with a conditional branch and joins at one
+        // `jsr`, and dropping that finds neither of them. An unknown predecessor poisons the
+        // whole answer, because a path we cannot see may carry anything.
+        for (const Pending& q : pending) {
+            std::set<std::uint32_t> targets;
+            if (reaching_constants(q.block, q.pc, q.reg, preds, block_end, entry, targets) &&
+                !targets.empty()) {
+                bool any = false;
+                for (std::uint32_t v : targets) {
+                    const std::uint32_t t = normalise(q.pc_relative ? q.pc + 4 + v : v);
+                    if (in_image(t)) {
+                        calls.push_back(t);
+                        any = true;
+                    }
+                }
+                if (any)
+                    continue;
+                note_unresolved(q.pc, q.fn, q.op, kReasonOutOfImage);
+            } else {
+                note_unresolved(q.pc, q.fn, q.op, kReasonNoConstant);
             }
         }
         // Blocks that fell into an already-known function are not ours; trim to the first such
@@ -337,6 +450,13 @@ private:
     std::set<std::uint32_t> slots_;  // delay slots of every walked branch
     std::size_t pointer_candidates_ = 0, pointer_accepted_ = 0, switches_ = 0;
     std::set<std::uint32_t> switch_sites_;
+    // Keyed by address so a site walked more than once -- functions can share tails -- is recorded
+    // once rather than per visit.
+    std::map<std::uint32_t, UnresolvedIndirect> unresolved_;
+
+    void note_unresolved(std::uint32_t pc, std::uint32_t fn, const char* op, const char* reason) {
+        unresolved_.emplace(pc, UnresolvedIndirect{pc, fn, op, reason});
+    }
     std::vector<std::string> notes_;
 };
 
@@ -361,7 +481,17 @@ std::string to_json(const DiscoverResult& r, const Image& image) {
     o << "  ],\n  \"switch_sites\": [";
     for (std::size_t i = 0; i < r.switch_sites.size(); ++i)
         o << (i ? ", " : "") << "\"" << hex(r.switch_sites[i]) << "\"";
-    o << "]\n}\n";
+    // Every control transfer through a register whose target could not be established. This is the
+    // measurable form of a discovery gap: a heuristic is worth writing when it shortens this list,
+    // and worth keeping when it shortens it without changing behaviour.
+    o << "],\n  \"unresolved_indirect\": [\n";
+    for (std::size_t i = 0; i < r.unresolved.size(); ++i) {
+        const auto& u = r.unresolved[i];
+        o << "    {\"address\": \"" << hex(u.address) << "\", \"op\": \"" << u.op
+          << "\", \"in_function\": \"" << hex(u.in_function) << "\", \"reason\": \"" << u.reason
+          << "\"}" << (i + 1 < r.unresolved.size() ? "," : "") << "\n";
+    }
+    o << "  ]\n}\n";
     return o.str();
 }
 

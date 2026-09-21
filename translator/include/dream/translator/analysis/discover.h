@@ -28,11 +28,30 @@ struct DiscoveredFunction {
     std::string origin;  // "seed", "call", "pointer", "sweep"
 };
 
+// A control transfer through a register whose target discovery could not establish. Reporting
+// these is what makes a discovery gap measurable: without it the only way to count them is to
+// decode the image from outside and subtract what was found, which counts data that looks like
+// code and cannot see why a site was given up on.
+struct UnresolvedIndirect {
+    std::uint32_t address;      // the jmp/jsr/braf/bsrf instruction
+    std::uint32_t in_function;  // entry of the function being walked when it was reached
+    const char* op;             // "JMP", "JSR", "BRAF", "BSRF"
+    const char* reason;         // why it was given up on; see kReason* below
+};
+
+// Why a site is unresolved. Distinct reasons need distinct fixes: a table we failed to recognise
+// wants table recovery, a register we could not trace wants constant propagation, and a target
+// outside the image is usually a pointer into RAM that needs a relocation in the game's config.
+inline constexpr const char* kReasonNoTable = "no_table";         // switch recovery declined it
+inline constexpr const char* kReasonNoConstant = "no_constant";   // the register was not traceable
+inline constexpr const char* kReasonOutOfImage = "out_of_image";  // resolved, but not to code here
+
 struct DiscoverResult {
     std::vector<DiscoveredFunction> functions;  // sorted by entry
     std::size_t code_bytes = 0;
     std::size_t pointer_candidates = 0, pointer_accepted = 0, switches = 0;
-    std::vector<std::uint32_t> switch_sites;  // jump addresses of recovered tables
+    std::vector<std::uint32_t> switch_sites;     // jump addresses of recovered tables
+    std::vector<UnresolvedIndirect> unresolved;  // sorted by address
     std::vector<std::string> notes;
 };
 

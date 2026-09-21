@@ -59,3 +59,7 @@ tests/kos/**/*.elf
 tests/kos/**/*.o
 tests/kos/**/*.bin
 tests/sh4/cprogs/*.elf
+
+# Regression captures (tools/regress/gate.py): keyed to one disc and one build, so they mean
+# nothing on another machine.
+.regress/
