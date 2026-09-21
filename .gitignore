@@ -23,9 +23,15 @@ katana/
 dc_bios*
 dc_boot*
 dc_flash*
+# Console ROM dumps live here. Ignored as a directory, not just by filename, so a dump that does
+# not match the patterns above still cannot be committed. Your own console's ROM is yours to
+# dump; it is not ours to distribute.
+/bios/
 *.vmu
 *.vms
 *.vmi
+
+bios/
 
 # Build output
 build/

@@ -203,11 +203,8 @@ void DcMemory::store(std::uint32_t a, T v) {
                                sizeof(T)});
         }
         std::memcpy(t.bytes, &v, sizeof(T));
-        if (hash_writes)
-            note_write(a, static_cast<std::uint64_t>(static_cast<std::make_unsigned_t<T>>(v)),
+        note_ram_write(a, static_cast<std::uint64_t>(static_cast<std::make_unsigned_t<T>>(v)),
                        sizeof(T));
-        if ((a & 0x1FFFFFFFu) >= watch_lo && (a & 0x1FFFFFFFu) < watch_hi && on_watch_write)
-            on_watch_write(a, static_cast<std::uint32_t>(v), sizeof(T));
         return;
     }
     if (t.kind == Target::kMmio) {
@@ -308,7 +305,20 @@ void DcMemory::write32(std::uint32_t a, std::uint32_t v) {
 void DcMemory::write64(std::uint32_t a, std::uint64_t v) {
     const Target t = resolve(a, 8, true);
     if (t.kind == Target::kBytes) {
+        const std::uint32_t lo = static_cast<std::uint32_t>(v);
+        const std::uint32_t hi = static_cast<std::uint32_t>(v >> 32);
+        if (journaling) {
+            std::uint32_t old_lo = 0, old_hi = 0;
+            std::memcpy(&old_lo, t.bytes, 4);
+            std::memcpy(&old_hi, t.bytes + 4, 4);
+            journal.push_back({a, old_lo, lo, 4});
+            journal.push_back({a + 4, old_hi, hi, 4});
+        }
         std::memcpy(t.bytes, &v, 8);
+        // Two 4-byte reports, the same split the device path below uses, so a pair written here
+        // hashes identically to the same pair written as two stores.
+        note_ram_write(a, lo, 4);
+        note_ram_write(a + 4, hi, 4);
         return;
     }
     if (t.kind == Target::kMmio) {
@@ -336,6 +346,10 @@ void DcMemory::sq_flush(std::uint32_t a) {
                 journal.push_back({dest + 4 * i, old, words[i], 4});
             }
         std::memcpy(t.bytes, words, 32);
+        // A burst into RAM is eight stores as far as anything watching memory is concerned. Until
+        // this was here the hash and the watch saw none of them.
+        if (tracing_writes())
+            for (unsigned i = 0; i < 8; ++i) note_ram_write(dest + 4 * i, words[i], 4);
         return;
     }
     if (t.kind == Target::kMmio) {

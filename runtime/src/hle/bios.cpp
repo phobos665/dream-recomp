@@ -133,7 +133,14 @@ void Bios::setup_boot(std::uint32_t boot_addr) {
     c.r[5] = 0xF4000000;
     c.r[6] = 0xF4002000;
     c.r[7] = 0x00000070;
-    c.r[15] = 0x8D000000;
+    // 0x8C00F400, not the 0x8D000000 of the register capture above. That capture is taken where
+    // the BIOS enters the bootstrap, not where the game starts: its own PC is the bootstrap's
+    // entry and r4 carries that same address as an argument. The bootstrap then runs, and the
+    // last thing it does before handing over is point the stack at 0x8C00F400 -- twice, once
+    // through the cached window and once uncached. Starting a game at the top of RAM instead
+    // leaves the first frames sitting in the few dozen bytes some titles reserve there for their
+    // own bookkeeping (docs/boot-state.md).
+    c.r[15] = 0x8C00F400;
     c.gbr = 0x8C000000;
     c.vbr = 0x8C000000;
     c.dbr = 0x8C000010;
@@ -163,7 +170,11 @@ void Bios::setup_boot(std::uint32_t boot_addr) {
 }
 
 void Bios::write_sector(::dream::Memory& m, std::uint32_t dest, const std::uint8_t* data) {
-    if ((dest & 0x1C000000u) == 0x0C000000u) {
+    // The fast path below memcpys straight into the RAM buffer, so it bypasses DcMemory::store
+    // and everything watching it. With an instrument armed take the slow path instead: otherwise
+    // a sector landing in RAM is invisible to the write hash while the same sector landing
+    // anywhere else is not, and the asymmetry is in the GD-ROM path we are trying to measure.
+    if ((dest & 0x1C000000u) == 0x0C000000u && !sys_.memory.tracing_writes()) {
         std::memcpy(sys_.memory.ram() + (dest & (mem::DcMemory::kRamSize - 1)), data, 2048);
         return;
     }
