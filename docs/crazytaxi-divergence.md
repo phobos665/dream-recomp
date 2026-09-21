@@ -1,8 +1,11 @@
 # Crazy Taxi: why translated and interpreted runs disagree
 
-Closed 2026-09-21. The answer is not an emitter defect. Two of the three differences were
-artefacts of how the comparison was run, and the third is a structural limit of using the
-development interpreter as an oracle.
+Two of the three differences are artefacts of how the comparison was run. The third is open: the
+two paths select different overlay bodies at `0x8C00FA20`, and which of them is correct is not
+established.
+
+**Revised 2026-09-21.** A first version of this closed the whole question by attributing the third
+difference to IP.BIN code we never translate. That was wrong — see below.
 
 ## The three differences, in the order they were peeled off
 
@@ -37,7 +40,7 @@ frame, not per write index, so the two runs are being compared at different poin
 sequence. The tell is a write count differing by one or two with no differing write anywhere
 around it.
 
-### 3. Write 2,824,621: a call into IP.BIN
+### 3. Write 2,824,621: the paths pick different overlay bodies
 
 The first genuine difference. Writes `0` to `2,824,620` agree exactly, and `pr` — which is
 maintained on both paths — first differs at the same index, so control flow split in the
@@ -49,38 +52,47 @@ interpreted: 2824621 0c00f3dc 4 ...1fffff0f  pc 8c00fa26  pr 0c02a2ce
 ```
 
 Guest memory at `0x8C00FA26` holds `0x2F16`, `mov.l r1,@-r15`, which is exactly the store logged,
-so the interpreter is executing real code there. **That address is inside `0x8C008000`–`0x8C010000`,
-the 32 KB of IP.BIN the HLE loads at boot** — before any instrument is armed, which is why no
-write into it appears in the log and why an earlier pass over the log wrongly concluded the
-region was untouched.
+so the interpreter is executing real code there.
 
-Two further facts place it:
+**That code is a declared overlay.** `games/crazytaxi/crazytaxi.toml` carries:
 
-- The guest never rewrote the BIOS syscall vectors at `0x8C0000B0`–`0x8C0000C4`, so this is not a
-  vector the game redirected.
-- The translated run reports **0 untranslated call targets**. It never calls into IP.BIN at all.
+```toml
+[[relocations]]
+source = 0x0C16BBB8
+size = 0x58
+dest = 0x8C00FA00
+entries = [0x8C00FA00, 0x8C00FA20]
+overlay = true
+```
 
-So the interpreter follows a call into IP.BIN's own code, and the translated build, whose BIOS
-calls are intercepted by the Katana HLE, does not.
+`0x8C00FA26` is six bytes into the second entry. The write log shows the body being copied in at
+write index 721,033 from `pc 0x0C15EB94`, and the bytes match the memory dump once
+`--mask-segment`'s top-three-bit masking is undone (`0x0F164F26` logged, `0x2F164F26` in memory).
 
-## What this means
+So at the divergence the interpreter is executing an overlay variant and the translated build is
+not: its `pr` is `0x0C02A2DE` against the interpreter's `0x0C02A2CE`, and it reports **0
+untranslated call targets**, so it has code for that address and dispatched somewhere else.
 
-**We do not translate IP.BIN.** The translator's image is `1ST_READ.BIN`; the 32 KB loaded at
-`0x8C008000` is never lifted. A title that calls into it has code the translated build reaches by
-a different route — the HLE — and the two routes do different work and write different things.
+## What is and is not established
 
-So `--interpret` is **not a whole-run oracle** for a title that calls IP.BIN. Past the first such
-call the two paths are running different programs, and comparing their write hashes measures that,
-not the emitter. This is a limit of the method, not a defect to fix.
+Established: the two paths disagree about which overlay body to run, at a call whose target is
+disambiguated at run time by a signature read from guest memory.
 
-What remains a valid signal:
+**Not established: which one is right.** Overlay dispatch is emitter and runtime machinery, so
+this is not evidence that the emitter is clean — an earlier revision of this document said it was,
+on the mistaken grounds that `0x8C00FA26` was IP.BIN code we never translate. That was wrong: the
+address is inside the IP.BIN load window numerically, but the bytes there are game code copied
+over it at run time, and we do translate them.
 
-- The write hash comparing **two runs of the same path** — the regression gate. Unaffected.
-- `--replay`, which compares each translated function against the interpreter *for that function
-  only*: 153,450,465 calls, 0 disagreements. That never leaves the function, so it never crosses
-  into IP.BIN.
-- Translated against interpreted **up to the first IP.BIN call**, which for Crazy Taxi is
-  2,824,621 writes — most of the boot.
+It remains true that we never translate IP.BIN itself, and that is worth knowing for a title that
+calls into it. It is not what happens here.
+
+The two artefacts in section 1 and 2 above are unaffected: they were measured, not inferred.
+
+## Next on this
+
+Which overlay variant each path selects at `0x8C00FA20`, and why they differ. The signature read
+at call time is the thing to instrument.
 
 ## Method note
 
