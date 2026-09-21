@@ -1,0 +1,54 @@
+# METROPOLIS STREET RACER, MK-51012. A third in-tree reference title. Everything here is read off
+# the disc or came from --suggest-config.
+
+[game]
+id = "metropolisstreetracer"
+title = "Metropolis Street Racer"
+region = "USA"
+product = "MK-51012"
+
+[disc]
+image = "../MSR - Metropolis Street Racer (USA) (Rev A).chd"   # the owner's dump, gitignored
+
+[binary]
+path = "extracted/fs/1ST_READ.BIN"     # written by `dcdisc extract`, gitignored
+load_address = 0x8C010000
+link_address = 0x0C010000
+entry = 0x8C010000
+
+# The SH-4 exception vectors, copied into RAM by the startup code and run from there, plus one
+# more block at 0x8C000078. Found by --suggest-config.
+[[relocations]]
+source = 0x0C0740AC
+size = 0x34
+dest = 0x8C000000
+entries = [0x8C000000]
+
+[[relocations]]
+source = 0x0C081768
+size = 0x38
+dest = 0x8C000078
+entries = [0x8C000078]
+
+[[relocations]]
+source = 0x0C074018
+size = 0x34
+dest = 0x8C000100
+entries = [0x8C000100]
+
+[[relocations]]
+source = 0x0C074018
+size = 0x34
+dest = 0x8C000400
+entries = [0x8C000400]
+
+[[relocations]]
+source = 0x0C074050
+size = 0x58
+dest = 0x8C000600
+entries = [0x8C000600]
+
+[functions]
+pointers = true
+sweep = true
+extra = [0x0C082D18, 0x0C082F56]   # reached at run time, discovery had not found them
