@@ -115,15 +115,57 @@ the translator was confidently wrong:
 - The per-title `BRAF` resolution spread, and the conclusion drawn from it about toolchains
   predicting discovery effort, was measuring noise.
 
+## What actually defines those registers
+
+`tools/corpus/classify_jsr.py` walks back from each unresolved `JSR` to whatever last wrote the
+register it calls through. The answer depends sharply on how far back it looks, and that dependence
+is the finding:
+
+| search window | none | mem_load | pc_literal |
+| ---: | ---: | ---: | ---: |
+| 24 instructions | 62% | 25% | 9% |
+| 64 | 42% | 26% | 26% |
+| 200 | 17% | 28% | **46%** |
+
+`mem_load` barely moves. Those are pointers read out of a struct or a vtable, roughly 28% of the
+total and genuinely dynamic -- no static pass resolves them, and they are already handled at run
+time by `call_indirect`. Nothing to win there.
+
+What grows is `pc_literal`: a pointer loaded from a literal pool, which is **statically knowable**.
+At a 200-instruction window that is 8,211 sites, 46% of every unresolved indirect call in the
+corpus.
+
+## The cause: constant propagation stops at the basic block
+
+`discover.cpp:88-96` says it plainly -- *"the constant `reg` holds at `pc` when built inside the
+block"* -- and `block_start` is reset at the top of every block. A function that loads a callback
+into a register in one block and calls it in a later one is invisible to it, however obvious the
+constant is.
+
+That is the whole explanation for the window sweep above. The classifier walks back linearly and
+does not know where blocks begin, so the further it looks the more definitions it finds that
+discovery, confined to one block, cannot.
+
+**So the largest discovery gap is our own analysis being block-local, not a missing pattern.**
+Extending constant propagation to follow the control-flow graph -- at minimum to dominating blocks
+-- addresses a class an order of magnitude larger than anything in
+`dreamcastrecompiled-review.md`.
+
+**Treat 46% as an upper bound.** This classifier has no CFG: a definition it finds 150 instructions
+back may sit on a path that never reaches the call, and a proper dominator-based propagation would
+reject it. The recoverable share is somewhere between the 9% discovery manages today and that 46%,
+and the way to find out is to build it and re-run this scan -- which is now a measurement rather
+than an argument.
+
 ## Revised order
 
 1. ~~Report unresolved indirect sites~~ -- done, and it rewrote everything below it.
-2. **Indirect calls whose target constant propagation cannot trace** -- 91% of the problem, 17,723
-   sites, present in every title. The `dreamcastrecompiled-review.md` heuristic that matters is the
-   second one, branch-selected literals: two callbacks chosen by a conditional branch and joined at
-   one `jsr`, where straight-line propagation can only ever see the later of the two. How much of
-   the 91% has that shape is the next thing to measure, not assume -- group the `JSR` sites by the
-   instruction pattern that precedes them before writing anything.
+2. **Carry constants across basic blocks** -- the single biggest item by a wide margin. Up to 8,211
+   sites, 46% of all unresolved indirect calls, and it is our own analysis to extend rather than a
+   pattern to port. Measure the real recovery by re-running this scan afterwards.
+   `dreamcastrecompiled-review.md`'s branch-selected-literal heuristic is a special case of the
+   same problem -- two literals reaching one call through different predecessors -- and is worth
+   doing only if CFG-aware propagation does not already subsume it, which it probably does.
 3. **`JMP`**, 1,438 sites, 7%. The SDK veneer patterns are the relevant heuristic.
 4. **`BRAF`**, 160 sites. Almost entirely Tony Hawk's, so worth doing when that title matters and
    not before. The byte jump table is the relevant heuristic, and it is the one this project would
