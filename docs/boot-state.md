@@ -1,68 +1,75 @@
 # The boot stack pointer
 
-`Bios::setup_boot` hands a title the register state a real console would have left, and starts
-`r15` at `0x8D000000`, the top of the 16 MB. That value matches Flycast's `reios_setup_state`, and
-it is wrong for at least one title.
+`Bios::setup_boot` hands a title the register state a real console would have left. Until
+2026-09-21 it started `r15` at `0x8D000000`, the top of the 16 MB. It now starts at `0x8C00F400`.
 
-## What Rayman 2 showed
+## The register capture was of the wrong instant
 
-Rayman 2 dies on frame 19 returning to `0x00100000`. The cause is not the emitter. The game's
-allocator hands out a 2 MB block based at `0x8CDFFFA0`, ending at `0x8CFFFFA0`, and keeps the
-0x60 bytes above that for an eleven-word region descriptor at `0x8CFFFFC0`. One field of that
-descriptor is a 1 MB size, `0x00100000`, written by `mov.l r2,@(16,r14)` at `0x8C05A8F6` — a
-literal from the pool at `0x8C05A980`, not a stray value.
+The values in `setup_boot` come from Flycast's `reios_setup_state`, which carries them in a comment
+headed "Post Boot registers from actual bios boot". The last line of that capture is
+`pc 0xac008300` — the entry of the disc's bootstrap, not the game. `r4` in the same capture holds
+that address too, passed as the argument it is.
 
-`0x8CFFFFD0` is both that size field and, in our runs, the saved `PR` of a function still running
-on the initial stack. Rayman 2's entry point at `0x8C010000` never sets `r15`, so it inherits
-whatever the boot state gives it, and `0x8D000000` puts the first frames exactly where the game
-reserves its descriptor.
+So the capture is the moment the BIOS enters the bootstrap. We applied it and then jumped straight
+to the game, skipping the bootstrap entirely. Every register was right for a moment that never
+occurs in our boot, `r15` included.
 
-Crazy Taxi is unaffected because it moves its own stack to about `0x8C00F400` early on.
+## What the bootstrap actually leaves
 
-## What the real bootstrap does
+Read out of a disc's own IP.BIN. Its entry does two things in its first four instructions: it
+writes a cache-control value that turns the operand cache into addressable RAM, and it points the
+stack there, at `0x7E001000`. That is the only stack address in the first stage.
 
-Rayman 2's IP.BIN, disassembled at its entry:
+That value is not what a game inherits. We do model the operand-cache window
+(`0x7C000000`-`0x7FFFFFFF`), and booting Rayman 2 with the stack there still fails: the function
+at `0x8C010D1A` reserves a 16 KB frame and the operand cache is 8 KB, so the stack wraps.
 
-```
-8c008300  mov.l 0x8c008320,r0    ; r0 = 0xFF000000
-8c008302  mov.l 0x8c008324,r1    ; r1 = 0x0000092B
-8c008304  mov.l r1,@(28,r0)      ; CCR at 0xFF00001C: cache as RAM
-8c008306  mov.l 0x8c00831c,r15   ; r15 = 0x7E001000
-```
+The second stage settles it. Just before it hands over it loads the stack twice from literals,
+once through the uncached window and once through the cached one, and both hold **`0x8C00F400`**:
 
-So the first thing a real boot does is enable the operand cache as RAM and put the stack in it at
-`0x7E001000` — not in main RAM at all. It is the only literal stack load in the whole 32 KB.
+| Bootstrap address | Literal | Value |
+| --- | --- | --- |
+| `0x8C00E046` | `0x8C00E04C` | `0xAC00F400` |
+| `0x8C00E0A0` | `0x8C00E0BC` | `0x8C00F400` |
 
-That is not directly usable as our boot value: we model the region (`0x7C000000`-`0x7FFFFFFF`,
-`ocram_`), and booting Rayman 2 there still fails, because the function at `0x8C010D1A` subtracts
-a 16 KB frame and the operand cache is 8 KB. IP.BIN's second stage must move the stack into main
-RAM before `1ST_READ.BIN` runs; three `mov r0,r15` sites at `0x8C00B802`, `0x8C00E046` and
-`0x8C00E0A0` are the candidates, and none has been read yet.
+Confirmed independently against a retail boot ROM (`KABUTO Ver.1.01d`): scanning every literal the
+ROM loads into `r15` finds `0x8D000000` once, in the reset path, and the same `0x7E001000` the
+bootstrap uses. `0x8C00F400` appears nowhere in the ROM, which is consistent with the bootstrap
+rather than the BIOS being what sets a game's stack.
+
+Neither the ROM nor any disc content is in this repository, and the `/bios/` directory is ignored
+as a directory so that a dump saved under any name cannot be committed. Nothing above is copied
+from either: these are addresses and values, described.
 
 ## Measured
 
 | Boot `r15` | Rayman 2 | Crazy Taxi |
 | --- | --- | --- |
-| `0x8D000000` (current) | fault at frame 19, `pc 0x00100000` | 60 frames, baseline |
-| `0x7E001000` (IP.BIN's) | fault at frame 19, `pc 0xFFFFFFFF` | boots |
+| `0x8D000000` (was) | fault at frame 19, `pc 0x00100000` | 60 frames |
+| `0x7E001000` | fault at frame 19, `pc 0xFFFFFFFF` | boots |
 | `0x8CDF0000` | fault at frame 1502 | not run |
-| `0x8C00F400` | **1797 frames, no fault** | 60 frames, **write hash byte-identical** |
+| `0x8C00F400` (now) | **898 frames in 15 s, no fault** | 60 frames, **write hash identical** |
 
-Crazy Taxi is byte-identical under `0x8C00F400` because it never uses the boot stack. That is one
-title's worth of evidence that the change is inert, not a corpus result: no other title in the
-repository has a config that runs.
+The Crazy Taxi row is an A/B on one line of source: two builds, two runs, byte-identical write
+hashes over 60 frames. An earlier attempt to measure this through an environment-variable override
+reported the same answer for the wrong reason and cannot be relied on; the A/B replaced it.
 
-## Open
+## Why Rayman 2 cared and Crazy Taxi did not
 
-`0x8C00F400` is a value that works, not a value we have justified. Before it becomes the default,
-one of these should land:
+Rayman 2's allocator hands out a 2 MB block based at `0x8CDFFFA0`, ending at `0x8CFFFFA0`, and
+keeps the `0x60` bytes above that for an eleven-word memory-region descriptor at `0x8CFFFFC0`. One
+field is a 1 MB size, `0x00100000`. Its entry point never sets `r15`, so with the stack at
+`0x8D000000` its first frames sat inside those reserved bytes, and the size field landed on a
+saved return address.
 
-1. **Read IP.BIN's second stage** and find the `r15` it leaves for `1ST_READ.BIN`. That is the
-   authoritative answer and the disassembly is sitting there.
-2. **Run IP.BIN** rather than emulating its end state. We already load all 32 KB to `0x8C008000`
-   and then jump past it to the game.
-3. If neither is practical, make it a config key and default it to today's `0x8D000000`, which at
-   least keeps the choice visible per title rather than silently wrong.
+Four of four titles examined — Rayman 2, MSR and Tony Hawk's Pro Skater 2 share a byte-identical
+entry stub, and Crazy Taxi's differs — inherit the boot stack rather than setting their own at
+entry. Crazy Taxi moves its stack to `0x8C00F400` itself shortly afterwards, which is why it never
+noticed.
 
-Whichever it is, this is a runtime-level fix. Nothing about it belongs in a game's TOML except as
-a last resort.
+## Still open
+
+`sgr` is still `0x8D000000`, from the same capture and so from the same wrong instant, as are
+`r0`-`r7`, `gbr`, `vbr` and `pr`. Only `r15` has been corrected, because only `r15` had a
+demonstrated failure behind it. The rest are worth revisiting the same way — against the
+bootstrap — rather than assumed correct.

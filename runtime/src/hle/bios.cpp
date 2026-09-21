@@ -133,7 +133,14 @@ void Bios::setup_boot(std::uint32_t boot_addr) {
     c.r[5] = 0xF4000000;
     c.r[6] = 0xF4002000;
     c.r[7] = 0x00000070;
-    c.r[15] = 0x8D000000;
+    // 0x8C00F400, not the 0x8D000000 of the register capture above. That capture is taken where
+    // the BIOS enters the bootstrap, not where the game starts: its own PC is the bootstrap's
+    // entry and r4 carries that same address as an argument. The bootstrap then runs, and the
+    // last thing it does before handing over is point the stack at 0x8C00F400 -- twice, once
+    // through the cached window and once uncached. Starting a game at the top of RAM instead
+    // leaves the first frames sitting in the few dozen bytes some titles reserve there for their
+    // own bookkeeping (docs/boot-state.md).
+    c.r[15] = 0x8C00F400;
     c.gbr = 0x8C000000;
     c.vbr = 0x8C000000;
     c.dbr = 0x8C000010;

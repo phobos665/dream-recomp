@@ -233,7 +233,10 @@ TEST_CASE("bios: boot state mirrors the real BIOS hand-over and loads IP.BIN") {
     bios.setup_boot(0x8C010000);
     auto& c = sys.ctx;
     CHECK(c.pc == 0x8C010000u);
-    CHECK(c.r[15] == 0x8D000000u);
+    // Where the bootstrap leaves the stack, not where the BIOS leaves it before the bootstrap
+    // runs. 0x8D000000 here would put a game's first frames on top of the handful of words some
+    // titles keep at the top of RAM (docs/boot-state.md).
+    CHECK(c.r[15] == 0x8C00F400u);
     CHECK(c.gbr == 0x8C000000u);
     CHECK(c.vbr == 0x8C000000u);
     CHECK(sh4::read_sr(c) == 0x400000F1u);
