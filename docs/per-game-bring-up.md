@@ -68,6 +68,45 @@ for whether the emitter is at fault, `DREAM_INTERP_FUNCS` for which function, an
 for what the code actually is. Those four answer nearly every question you will have, and every
 defect found in this repository during the Crazy Taxi bring-up was found with them.
 
+## What a claim needs before you make it
+
+Bring-up produces a lot of statements that sound like findings and are not. "It reaches the title
+screen", "that seed fixed it", "the GD-ROM never completes" -- each of those was said during the
+Crazy Taxi and Rayman 2 work, and the last two were wrong. They were not careless; each had a
+plausible mechanism and evidence that looked sufficient. What they lacked was a check that the
+evidence could actually carry the claim.
+
+**Something happened is not the right thing happened.** Sort what you are about to say into one of
+these, and use the instrument that matches it.
+
+| Claim | What it needs | What is not enough |
+| --- | --- | --- |
+| "the title got further" | a frame count or a stop reason from a run you just made | it looked different on screen |
+| "behaviour is unchanged" | `tools/regress/gate.py compare`, both scenarios | tests pass; frame count is the same; it still boots |
+| "this address is a hole / is mid-function" | the function list **and** the disassembly, per Step 4 | one of the two |
+| "the emitter is at fault" | `--interpret` runs the same scenario correctly | the fault is inside translated code |
+| "this function is at fault" | `DREAM_INTERP_FUNCS` shrunk until putting one member back returns the fault | it appears in the backtrace |
+| "the runtime handled X wrongly" | a measurement of what the runtime actually did | the guest's behaviour is consistent with it |
+| "it plays correctly" | you played it | it ran without faulting |
+
+Two habits are worth more than the table.
+
+**Read the whole of anything before concluding from it.** A GD-ROM transfer was diagnosed as
+hanging forever from the first eighteen lines of its trace; the last twelve showed it completing
+normally. A trace, a log, a diff -- look at the end as well as the beginning, and at the counts as
+well as the lines.
+
+**Measure before you reason, when measuring is cheap.** The Rayman 2 interrupt return was diagnosed
+as broken by reasoning carefully about an unusual handler epilogue. One temporary `fprintf` showed
+it resuming at exactly the right address. The reasoning took twenty minutes and was wrong; the
+measurement took two minutes and was right. If a question can be settled with a print statement,
+print.
+
+The cost of getting this wrong is not just your time. A wrong diagnosis committed to a ledger is
+read later as fact, and the next person re-derives from it. If you record one, record the
+retraction next to it -- `docs/progress.md` in the Rayman 2 project keeps a retracted section on
+purpose, so nobody walks the same path twice.
+
 ## Step 1: make the project
 
 ```
