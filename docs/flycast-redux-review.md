@@ -1,5 +1,10 @@
 # Review: GeneralAtrox/flycast_Redux
 
+> **Superseded in part by [flycast-redux-spike.md](flycast-redux-spike.md) (2026-09-21).** The
+> spike built it: the build was cheap, and the recommendation below does not survive, because no
+> Flycast — this fork, stock upstream, or the official release binary — boots a game on this
+> machine. Read the spike before acting on any cost estimate here.
+
 Read 2026-09-21. **Adopt it — as an external, pinned reference implementation that emits SQLite
 traces we diff against, not as code we vendor.** It is real, and thicker than its description
 suggests.
