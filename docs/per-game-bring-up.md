@@ -267,6 +267,22 @@ because it is where it fits the narrative, not where it fits the work.
 Get a gate that tells you whether you broke the emulation. Every
 guest write is hashed, per frame, so an identical hash means the run did bit-for-bit the same thing.
 
+There is a tool for this, and using it beats rolling your own:
+
+```
+python3 tools/regress/gate.py capture before --game <id> --config game/<id>.toml
+# ... change something, rebuild ...
+python3 tools/regress/gate.py capture after  --game <id> --config game/<id>.toml
+python3 tools/regress/gate.py compare before after
+```
+
+It runs both scenarios below, pins the console clock, strips the timing lines that differ between
+runs by design, and stores captures in `.regress/`, which is gitignored. **A missing capture is an
+error, not a match** -- an earlier shell version compared two absent files and printed "identical
+to baseline", which is the worst thing a gate can do, and that is designed out here.
+
+What it does underneath, which is worth knowing when it surprises you:
+
 ```
 ./build/games/<id>/<id>_boot --config … --no-audio --rtc-seed 1 --max-seconds 40 \
     --write-hash /tmp/before.hash --report /tmp/before.report
