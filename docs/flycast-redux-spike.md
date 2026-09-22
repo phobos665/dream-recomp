@@ -4,8 +4,22 @@ Run 2026-09-21 against `GeneralAtrox/flycast_Redux` at `e4345f32`, on Darwin 27.
 The question was the one [flycast-redux-review.md](flycast-redux-review.md) left open: that review
 read build files and did not build anything.
 
-**Answer: it builds, and it does not run — and neither does any other Flycast on this machine,
-including the official release binary.** The blocker is upstream and predates the fork.
+**Answer: it builds. Whether it runs is unresolved, and an earlier version of this document got
+that badly wrong.**
+
+> **Corrected 2026-09-22.** This document previously concluded that no Flycast boots a game on
+> this machine, and recommended against adopting the fork on that basis. That conclusion does not
+> survive: Flycast runs here. The owner launches it normally and plays titles in it, including the
+> one this project is bringing up.
+>
+> What the measurements below actually support is narrower: **no Flycast boots a game when
+> launched from a terminal by this agent** — not the fork, not stock upstream, not the official
+> release binary. Running the same official binary the way a person does works. The difference
+> has not been identified; a sandboxed launch fails differently from an unsandboxed one, so the
+> sandbox is part of it but not all of it.
+>
+> Read every "does not run" below as "did not run when launched this way". The build result is
+> unaffected and stands.
 
 ## What was measured
 
