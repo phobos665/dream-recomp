@@ -34,6 +34,12 @@ public:
     void common_reg_read(unsigned offset, bool byte);
     // Produces one stereo sample.
     void sample(std::int16_t& left, std::int16_t& right);
+    // Bits that the final mix drops before its clamp to 16 bits. Flycast drops none, and a game
+    // that mixes many loud voices then clips. MAME's AICA keeps one bit of headroom.
+    unsigned headroom = 0;
+    // Called with each stereo sample of the final mix before its clamp, when set: a limiter can
+    // bring the peaks under the clamp.
+    std::function<void(std::int32_t& left, std::int32_t& right)> before_clamp;
 
     // Diagnostics
     std::uint64_t key_ons = 0, key_offs = 0, samples = 0, nonzero_samples = 0;
