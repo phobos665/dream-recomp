@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "dream/runtime/aica/aica.h"
+#include "dream/runtime/aica/limiter.h"
 #include "dream/runtime/aica/rtc.h"
 #include "dream/runtime/gdrom/disc.h"
 #include "dream/runtime/hle/bios.h"
@@ -1774,6 +1775,10 @@ int main(int argc, char** argv) {
     // AICA control block with the ARM7 that runs the title's sound driver from sound RAM
     // (WP2.5; no sound generation yet).
     dream::aica::Aica aica(sys.sched, sys.holly, sys.memory);
+    aica.mixer.headroom = cfg.audio_headroom;
+    dream::aica::Limiter limiter;
+    if (cfg.audio_limiter)
+        aica.mixer.before_clamp = [&limiter](std::int32_t& l, std::int32_t& r) { limiter.process(l, r); };
     sys.memory.map_mmio(dream::aica::Aica::kRegBase, dream::aica::Aica::kRegEnd, &aica);
     // ARM7 program-counter histogram sampled once per 44.1 kHz tick (where the driver spends its
     // time), and the optional recording.

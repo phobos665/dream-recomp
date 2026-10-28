@@ -40,6 +40,11 @@ struct GameConfig {
 
     std::map<std::uint32_t, std::string> hle;    // guest address -> runtime handler name
     std::map<std::uint32_t, std::string> hooks;  // guest address -> hook name
+
+    // [audio]: the bits that the AICA's final mix drops before its clamp to 16 bits (0 to 4), and
+    // whether a limiter brings the peaks that are left under the clamp.
+    unsigned audio_headroom = 0;
+    bool audio_limiter = false;
 };
 
 // Loads and validates. On failure returns false and sets `error` to one line naming the field.

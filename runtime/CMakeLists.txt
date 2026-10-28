@@ -23,6 +23,7 @@ add_library(dream_runtime STATIC
   src/aica/arm7.cpp
   src/aica/aica.cpp
   src/aica/mixer.cpp
+  src/aica/limiter.cpp
 )
 target_include_directories(dream_runtime PUBLIC include)
 # libchdr (BSD-3, third_party) for CHD disc images; the static target avoids a runtime DLL search.

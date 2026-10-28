@@ -64,3 +64,10 @@ entry = 0x8C000600
 # changing addresses near 0x8C00EE00. Neither is code: the first is a table of float constants that
 # kmSetUserClipping copies into a local array on its stack, the second a table of 12 small integers
 # copied the same way. Do not add them.
+
+# At full master volume the final mix reaches twice the 16-bit range in busy scenes and four times
+# in the largest explosions, and the clamp distorts them. One bit of headroom, as MAME's AICA keeps,
+# fits the busy scenes, and the limiter brings the explosions' peaks under the clamp.
+[audio]
+headroom = 1
+limiter = true
