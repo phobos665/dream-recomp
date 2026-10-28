@@ -1260,6 +1260,7 @@ int main(int argc, char** argv) {
             shot_presented = true;
         else if (!std::strcmp(argv[i], "--present-mode") && i + 1 < argc) {
             const char* m = argv[++i];
+#ifdef DREAM_WITH_RENDERER
             using PM = dream::render::vk::Window::PresentMode;
             if (!std::strcmp(m, "mailbox"))
                 present_mode = PM::Mailbox;
@@ -1271,6 +1272,9 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "unknown present mode %s: vsync, mailbox or immediate\n", m);
                 return 2;
             }
+#else
+            (void)m;  // a build without the renderer has no window to present to
+#endif
         } else if (!std::strcmp(argv[i], "--bindings") && i + 1 < argc) {
             bindings_file = argv[++i];
             bindings_file_set = true;
@@ -1362,6 +1366,11 @@ int main(int argc, char** argv) {
     (void)validation;
     (void)unthrottled;
     (void)writeback;
+    (void)shot_presented;
+    (void)bindings_file_set;
+    (void)start_with_fps;
+    (void)screenshot_at;
+    (void)capture_at;
 #endif
     dream::translator::GameConfig cfg;
     std::string err;
