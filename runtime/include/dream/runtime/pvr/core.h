@@ -100,7 +100,29 @@ public:
     // Render time model: fixed cost plus per parameter word.
     std::uint64_t render_base_cycles = 200'000, render_cycles_per_word = 4;
 
+    // Texture memory the YUV converter and the texture path have written since the last call, as
+    // a [lo, hi) range of offsets in the 64-bit view. A renderer that caches decoded textures has
+    // to drop what lies there: a video lands at the same address every frame, and a cache that
+    // only ever saw the first, empty frame shows Sofdec video as a flat green rectangle.
+    bool take_texture_writes(std::uint32_t& lo, std::uint32_t& hi) noexcept {
+        if (tex_dirty_hi_ <= tex_dirty_lo_)
+            return false;
+        lo = tex_dirty_lo_;
+        hi = tex_dirty_hi_;
+        tex_dirty_lo_ = ~0u;
+        tex_dirty_hi_ = 0;
+        return true;
+    }
+
 private:
+    void note_texture_write(std::uint32_t lo, std::uint32_t hi) noexcept {
+        if (lo < tex_dirty_lo_)
+            tex_dirty_lo_ = lo;
+        if (hi > tex_dirty_hi_)
+            tex_dirty_hi_ = hi;
+    }
+    std::uint32_t tex_dirty_lo_ = ~0u, tex_dirty_hi_ = 0;
+
     void start_render();
     void fifo_word(std::uint32_t addr, std::uint32_t value);
     // YUV converter (WP2.3): the guest streams 4:2:0 macroblocks into the converter FIFO and the

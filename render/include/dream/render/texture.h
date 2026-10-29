@@ -46,6 +46,10 @@ struct TextureInfo {
     bool vq = false;
     bool mipmapped = false;
     bool stride = false;
+    // Texels per row in memory for a scan-order texture; 0 means `width`. A stride texture keeps
+    // its TSP size for addressing -- u = 1 is still the power of two -- while its rows are
+    // TEXT_CONTROL's stride apart in memory, so only the first `pitch` texels of a row are real.
+    std::uint32_t pitch = 0;
     std::uint32_t palette_base = 0;  // first palette entry for an indexed texture
 
     bool indexed() const noexcept {

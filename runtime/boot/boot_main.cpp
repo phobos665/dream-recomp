@@ -120,7 +120,7 @@ void print_guest_backtrace() {
 // on and the default leaves video memory alone. Flycast reaches the same conclusion from the other
 // direction: its framebuffer emulation is off unless a title needs it.
 struct Live {
-    Live(dream::mem::DcMemory& memory, const dream::pvr::Core& pvr) : memory_(memory), pvr_(pvr) {}
+    Live(dream::mem::DcMemory& memory, dream::pvr::Core& pvr) : memory_(memory), pvr_(pvr) {}
 
     // `scale` multiplies the resolution the geometry is drawn at. The frame is resampled back to
     // the guest's own framebuffer on the way into video memory, so a higher setting sharpens the
@@ -183,6 +183,13 @@ struct Live {
                 px, px + static_cast<std::size_t>(offscreen.width()) * offscreen.height());
             holding_frame = true;
         }
+        // Texture memory the YUV converter or the texture path rewrote since the last render: a
+        // video frame lands at the same address every time, so what the cache decoded is stale.
+        std::uint32_t tex_lo = 0, tex_hi = 0;
+        if (pvr_.take_texture_writes(tex_lo, tex_hi))
+            texture_refreshes += renderer.textures().invalidate_range(tex_lo, tex_hi, false);
+        // TEXT_CONTROL (0x5F80E4): the width of a stride texture, in units of 32 texels.
+        renderer.textures().set_stride_width((pvr_.reg(0xE4) & 31u) * 32u);
         if (!offscreen.render(renderer, frame, geometry)) {
             if (!reported_error) {
                 reported_error = true;
@@ -674,6 +681,7 @@ struct Live {
                   decoded_frames = 0, backgrounds = 0, texture_renders = 0;
     std::vector<std::uint32_t> held_frame;  // the last frame, while a render to texture is drawn
     bool holding_frame = false;
+    std::uint64_t texture_refreshes = 0;  // cached textures dropped for YUV or texture-path writes
     std::uint32_t target_address = 0;
     std::uint64_t guest_frame = 0;
     std::vector<std::uint32_t> last_stream;
@@ -705,7 +713,7 @@ struct Live {
 
 private:
     dream::mem::DcMemory& memory_;
-    const dream::pvr::Core& pvr_;
+    dream::pvr::Core& pvr_;  // not const: the renderer takes the texture writes it has to drop
     std::vector<std::uint32_t> targets_;  // every buffer the renderer has drawn into
 };
 #endif  // DREAM_WITH_RENDERER
@@ -2155,7 +2163,8 @@ int main(int argc, char** argv) {
         std::printf(
             "window: %llu frames drawn (%llu with a background plane), %llu presented (%llu "
             "decoded from video memory), %llu written back, %llu rendered to texture; textures %u "
-            "decoded, %u failed, %u overwritten by a render, %llu palette changes\n",
+            "decoded, %u failed, %u overwritten by a render, %llu palette changes, %llu refreshed "
+            "after video or texture-path writes\n",
             static_cast<unsigned long long>(live->rendered),
             static_cast<unsigned long long>(live->backgrounds),
             static_cast<unsigned long long>(live->presented),
@@ -2164,7 +2173,8 @@ int main(int argc, char** argv) {
             static_cast<unsigned long long>(live->texture_renders),
             live->renderer.textures().decoded, live->renderer.textures().failed,
             live->renderer.textures().overwritten,
-            static_cast<unsigned long long>(live->palette_changes));
+            static_cast<unsigned long long>(live->palette_changes),
+            static_cast<unsigned long long>(live->texture_refreshes));
         if (live->have_frame)
             std::printf("window: last shown %s\n", live->shown.describe().c_str());
         // Vulkan objects are destroyed now rather than at scope exit, while everything they were
