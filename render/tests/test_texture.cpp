@@ -104,6 +104,31 @@ TEST_CASE("texture: the word pair describes size, format and layout") {
     CHECK_FALSE(describe_texture(make_tcw(0, 7), make_tsp(0, 0), 0, info));
 }
 
+TEST_CASE("texture: a stride texture keeps its size and steps rows by the stride") {
+    // 16x8 as addressed, with rows 8 texels apart in memory: what Sofdec video does with a
+    // 320-wide frame in a 512-wide texture, at a size a test can check.
+    const u32 tcw = make_tcw(0, 1, /*twiddled=*/false) | (1u << 25);  // RGB565, stride
+    TextureInfo info;
+    REQUIRE(describe_texture(tcw, make_tsp(1, 0), 8, info));
+    CHECK(info.width == 16);  // u = 1 is still the power of two
+    CHECK(info.height == 8);
+    CHECK(info.pitch == 8);
+    CHECK_FALSE(info.twiddled);
+    CHECK(info.size_bytes() == 8 * 8 * 2);
+
+    auto v = vram();
+    for (u32 y = 0; y < 8; ++y)
+        for (u32 x = 0; x < 8; ++x) put16(v, (y * 8 + x) * 2, 0xF800);  // red, packed 8 a row
+    put16(v, (3 * 8 + 5) * 2, 0x001F);                                  // one blue texel at (5, 3)
+    std::vector<std::uint32_t> out;
+    REQUIRE(decode_texture(info, v.data(), v.size(), nullptr, out));
+    REQUIRE(out.size() == 16 * 8);
+    CHECK(out[3 * 16 + 5] == 0xFFFF0000u);  // blue lands in its own row, not one row early
+    CHECK(out[3 * 16 + 4] == 0xFF0000FFu);
+    CHECK(out[7 * 16 + 7] == 0xFF0000FFu);
+    CHECK(out[3 * 16 + 12] == 0u);  // past the stride: clear
+}
+
 TEST_CASE("texture: the three 16-bit formats expand to full-range RGBA") {
     auto v = vram();
     TextureInfo info;

@@ -86,7 +86,7 @@ bool TextureCache::set_palette(const std::uint32_t* palette_ram, PaletteFormat f
     return true;
 }
 
-std::size_t TextureCache::invalidate_range(std::uint32_t begin, std::uint32_t end) {
+std::size_t TextureCache::invalidate_range(std::uint32_t begin, std::uint32_t end, bool by_render) {
     if (!ctx_ || !ctx_->device() || end <= begin)
         return 0;
     std::vector<std::uint64_t> doomed;
@@ -110,7 +110,8 @@ std::size_t TextureCache::invalidate_range(std::uint32_t begin, std::uint32_t en
         free_entry(it->second);
         entries_.erase(it);
     }
-    overwritten += static_cast<std::uint32_t>(doomed.size());
+    if (by_render)
+        overwritten += static_cast<std::uint32_t>(doomed.size());
     return doomed.size();
 }
 
@@ -215,15 +216,19 @@ VkDescriptorSet TextureCache::get(VkCommandBuffer cmd, std::uint32_t tcw, std::u
         return VK_NULL_HANDLE;
     // The size lives in the TSP word, the rest in the TCW; together they identify the texture, and
     // the addressing the polygons need decides the sampler bound with it.
+    // A stride texture's width comes from TEXT_CONTROL, not the TSP word, so it is part of the key
+    // for those: the same words read at another stride are another texture.
+    const bool stride = ((tcw >> 25) & 1u) != 0;
+    const std::uint64_t stride_key = stride ? ((stride_width_ / 32u) & 31u) << 8 : 0u;
     const std::uint64_t key =
-        (static_cast<std::uint64_t>(tcw) << 32) | (tsp & 0x3Fu) | (tiled ? 0x40u : 0u);
+        (static_cast<std::uint64_t>(tcw) << 32) | (tsp & 0x3Fu) | (tiled ? 0x40u : 0u) | stride_key;
     if (auto it = entries_.find(key); it != entries_.end()) {
         ++hits;
         return it->second.set;
     }
 
     Entry e;
-    if (!describe_texture(tcw, tsp, 0, e.info)) {
+    if (!describe_texture(tcw, tsp, stride_width_, e.info)) {
         ++failed;
         entries_.emplace(key, std::move(e));  // remember the failure so it is not retried per frame
         return VK_NULL_HANDLE;

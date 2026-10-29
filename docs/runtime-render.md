@@ -367,6 +367,14 @@ so the window keeps the last frame until the next one is drawn. Rez renders a 25
 way between its frames. Without the write-back, the texture kept stale bytes, which showed as
 stripes across Area 1.
 
+**Invalidating what the YUV converter and the texture path wrote** (2026-10-29). A Sofdec video
+decodes every frame into the same texture, so a cache keyed on the address kept the first frame it
+decoded -- before the converter had written anything -- and Rush 2049's intro videos showed as a
+green rectangle. `pvr::Core` now records the texture memory the converter and the texture path
+write (`take_texture_writes`), and the launcher drops the cached textures there before each render.
+Stride textures also take their row pitch from `TEXT_CONTROL` rather than from the TSP width
+(`TextureInfo::pitch`): the cache was given a stride width of zero.
+
 **Input.** The window maps a keyboard and any connected pad onto the Maple controller through the
 player's own bindings (`render/input.h`), both live at once. The defaults are the layout the
 launcher always had: arrow keys for the d-pad, `Z` `X` `A` `S` for A, B, X and Y, return for start,

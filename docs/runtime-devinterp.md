@@ -82,7 +82,16 @@ Bring-up tools added while chasing the first Crazy Taxi task switch (2026-09-12)
   affected (register-indirect calls, resumes); direct `bsr`/`jsr`-to-literal calls are compiled
   in, so a culprit reached only directly needs the return-trace diff instead.
 - `DREAM_WATCH_WRITE=addr[:len]` logs every guest store into a range with the last call site, PR,
-  r15 and frame; `DREAM_TRACE_GDROM=1` logs the GD-ROM syscalls; `DREAM_ARM7_WATCH=pc[,n]`
+  r15 and frame, and `DREAM_WATCH_READ=addr[:len]` every load from RAM (who reads a variable says
+  which code depends on it). The pc is the last interrupt poll, the reading function's entry in
+  translated code; under `--interpret` it is the instruction itself. `DREAM_WATCH_CHAIN=1` adds the
+  guest call chain to every write it logs, read from the host stack (on Windows this needs a build
+  with debug information). `DREAM_WATCH_CALL=addr[,addr...]` prints the registers, the guest stack
+  and that chain when a call or jump reaches one of those addresses untranslated.
+  `DREAM_TRACE_GDROM_CHAIN=1` prints the chain behind every GD-ROM request, `DREAM_TRACE_FLASH=1`
+  logs flash reads with their bytes, and `DREAM_PAD_ALL_PORTS=1` puts the same pad on all four
+  ports, to tell "the title reads another port" from "the title ignores the pad".
+- `DREAM_TRACE_GDROM=1` logs the GD-ROM syscalls; `DREAM_ARM7_WATCH=pc[,n]`
   prints the ARM7 registers when the sound driver is about to execute `pc`; `--dump-aram FILE`
   writes sound RAM at the stop (disassemble it with the container's `arm-eabi-objdump -D -b
   binary -marm`); the report includes an ARM7 pc histogram and the AICA/Holly interrupt state.

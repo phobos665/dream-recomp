@@ -264,6 +264,7 @@ void Core::yuv_macroblock() {
             const std::uint32_t off = base + (mby * 16 + row) * pitch + (mbx * 16 + x) * 2;
             memory_.write32(0x04000000u | (off & 0x00FFFFFCu), word);
             ++texture_words;
+            note_texture_write(off & 0x00FFFFFCu, (off & 0x00FFFFFCu) + 4);
         }
     }
 
@@ -284,6 +285,7 @@ void Core::write(std::uint32_t addr, std::uint32_t value, unsigned size) {
     if (addr >= kTexBase && addr < kFifoEnd) {  // texture path: lands in the 64-bit VRAM view
         ++texture_words;
         memory_.write32(0x04000000u | (addr & 0x00FFFFFCu), value);
+        note_texture_write(addr & 0x00FFFFFCu, (addr & 0x00FFFFFCu) + 4);
         return;
     }
     if (addr < kRegBase || addr >= kRegEnd)

@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "dream/render/image.h"
 #include "dream/render/input.h"
 #include "dream/render/vk/context.h"
 #include "dream/render/vk/resources.h"
@@ -22,9 +23,9 @@ namespace dream::render::vk {
 // runtime never learns what a keyboard is.
 //
 //   arrow keys   d-pad          Z X A S   the A, B, X and Y buttons
-//   return       start          Q W       the left and right analogue triggers
+//   return       start          Q W       the settings screen's tabs (a pad's shoulder buttons)
 //   F12          screenshot     F11       capture everything about this frame
-//   F1           the binding screen
+//   F1           the settings screen
 //   escape       quit, or back while the binding screen is up
 //
 // These are the launcher's own keys and are deliberately not bindable. Menu and Back in particular
@@ -39,8 +40,8 @@ enum class Control : unsigned {
     X,
     Y,
     Start,
-    LeftTrigger,
-    RightTrigger,
+    PrevTab,
+    NextTab,
     Screenshot,
     Capture,
     ToggleFps,
@@ -110,6 +111,10 @@ public:
     // "KEYBOARD" first, then one row per connected pad. Rebuilt on hot-plug.
     const std::vector<std::string>& devices() const noexcept { return devices_; }
     bool gamepad_connected() const noexcept { return !pads_.empty(); }
+
+    // Shakes every connected pad at `strength` (0 to 1) for `ms` milliseconds; 0 stops it. For the
+    // console's rumble pack.
+    void rumble(float strength, std::uint32_t ms);
 
     // Rebinding: the next physical input becomes a Binding rather than reaching the game. Escape
     // cancels. While capturing, pad_held() reports nothing, so the key being bound cannot also be
@@ -191,5 +196,9 @@ private:
 // beside whichever game happened to be running. Empty when SDL cannot name such a place, which the
 // caller should treat as "do not persist" rather than as a failure.
 std::string default_bindings_path();
+
+// Decodes a PNG into the overlay's pixel layout, for the settings screen's pictures. SDL does the
+// decoding, which is why this lives here rather than beside Image.
+bool load_png(const std::string& path, Image& out, std::string* error = nullptr);
 
 }  // namespace dream::render::vk

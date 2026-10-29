@@ -20,6 +20,7 @@ add_library(dream_runtime STATIC
   src/hle/flash.cpp
   src/hle/bios.cpp
   src/maple/maple.cpp
+  src/maple/vmu_fs.cpp
   src/aica/arm7.cpp
   src/aica/aica.cpp
   src/aica/mixer.cpp

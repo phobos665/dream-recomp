@@ -24,19 +24,34 @@ build/dream-dev/games/crazytaxi/crazytaxi_boot \
 Use the development build for now: the release build stops at the first untranslated call target by
 design, and discovery is not closed (WP3.2). Out of the box, arrow keys are the d-pad, `Z` `X` `A`
 `S` are A, B, X and Y, return is start and `Q` and `W` are the analogue triggers -- all of them
-rebindable from `F1`, which opens the binding screen (a pad's select button does the same). `F10`
+rebindable from `F1`, which opens the settings screen (a pad's select button does the same). `F10`
 toggles the frame-rate counter, `F12` writes a screenshot and escape quits. `--scale 2` or `--scale 4` draws at a higher internal
 resolution; `--unthrottled` removes the real-time pacing; `--wav OUT.wav` records the audio; `--fps`
 starts with the counter already showing. `--help` lists every flag. Never commit a VMU image: it is
 owner data.
 
-The binding screen stops the guest while it is up, so nothing can be rebound mid-corner. Arrow keys
-or the pad's d-pad move, return or south confirms, escape or east goes back, and a row waiting for
-an input takes the next thing pressed. Keyboard and pad are edited separately and both stay live in
-play. Changes take effect immediately and are written out when the screen closes, to one file per
-user shared by every title; `--bindings FILE` puts them somewhere else instead. A file that is
-damaged or half-written falls back to the defaults for whatever it did not set, so a bad file cannot
-leave a title unplayable.
+The settings screen stops the guest while it is up, so nothing can be rebound mid-corner and no card
+is pulled out mid-save. It has two tabs, switched with `Q` and `W` or a pad's shoulder buttons.
+Arrow keys or the pad's d-pad move, return or south confirms, escape or east goes back.
+
+On the controller tab a row waiting for an input takes the next thing pressed. Keyboard and pad are
+edited separately and both stay live in play. Changes take effect immediately and are written out
+when the screen closes, to one file per user shared by every title; `--bindings FILE` puts them
+somewhere else instead. A file that is damaged or half-written falls back to the defaults for
+whatever it did not set, so a bad file cannot leave a title unplayable.
+
+The memory card tab shows what is in the pad's two expansion slots (A1 from `--vmu`, A2 from
+`--vmu2`), the saves on each card, and the card's own screen as the title last drew it. A slot can
+take any card in the card directory (`--vmu-dir`, by default the directory of `--vmu`), a new blank
+card, or nothing; the rumble pack is listed but not modelled yet, and leaves the slot empty.
+`--settings` opens the screen before the title first looks for its card, `--settings-tab memory` on
+that tab.
+
+`--ui-assets DIR` gives the screen pictures, all optional: `controller.png`, `controller_back.png`
+and `vmu.png`, with `controller.hotspots` and `controller_back.hotspots` placing each control on
+them (`name x y r` per line, with the bindings file's names and fractions of the picture's width
+and height) and `vmu.hotspots` placing the card's screen (`lcd x0 y0 x1 y1`, then `flip_x` or
+`flip_y` if needed). The pictures are the player's own and never part of the repository.
 
 The counter reads `59.9 FPS  0.99X`: frames presented per second of wall clock, and guest time per
 second of wall clock, where 1.00x is the console's own pace. Both are averaged over half a second,
@@ -56,8 +71,11 @@ That bundle replays offline, so the frame can be looked at again without the gam
 build/dream-dev/render/dream_render_view --vram capture-000.vram capture-000.ta
 ```
 
-`F12` writes just the picture, for when the picture is the whole story. `--screenshot-at N` and
-`--capture-at N` do the same at the Nth presented frame, for a run with nobody at the keyboard.
+`F12` writes just the picture, for when the picture is the whole story. `--screenshot-at N[,N...]`
+and `--capture-at N` do the same at the Nth presented frame, for a run with nobody at the keyboard.
+`--no-input` keeps the keyboard and any pad out of such a run, so `--press` drives it the same way
+whoever is at the machine; besides buttons, `--press` takes `stick_up`, `stick_down`,
+`stick_left`, `stick_right`, `ltrigger` and `rtrigger`, held fully over.
 
 A report is most useful as: what you did, what you expected, what happened, and the capture bundle.
 A screenshot alone shows the symptom; the bundle lets the same frame be drawn again and taken

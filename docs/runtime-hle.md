@@ -15,6 +15,10 @@ Flycast's reios and the KallistiOS headers (GPL-2.0 derivation per ADR 1).
 | 0x8C0000BC misc | r6 = -1, r7 | MISC_INIT, MISC_SETVECTOR (accepted, no effect) |
 | 0x8C0000E0 system | r4 | normal init, check disc, exit to menu (no-op) |
 
+The GD-ROM handler is also registered at 0x8C0010F0, where the real BIOS's second GD-ROM entry is:
+titles call it there directly rather than through the C0 vector (Rush 2049 does), and with the work
+area erased to 0xFF anything else at that address is an 0xFFFF instruction (2026-10-29).
+
 ## GD-ROM command queue
 
 One command at a time. `REQ_CMD` copies the four parameter words and returns a request id (0 while
@@ -29,6 +33,10 @@ transfers above 10 KB (about 1.8 MB/s) and two cycles per byte below. `EXEC_SERV
 scheduler to the caller's clock first, so a game that polls every frame sees the read progress it
 would see on hardware, and a completed read raises the Holly GD-DMA interrupt. Parameters are FADs
 (LBA + 150); data lands through the RAM fast path when the destination is main RAM.
+
+PIOREAD is the exception (2026-10-29): it completes at once and raises nothing, as reios has it.
+Rush 2049 streams its Sofdec intro videos through PIO reads, and while they ran like DMA reads the
+YUV converter was fed about a hundred and thirtieth of the stream.
 
 Timing (2026-09-12): every syscall charges guest cycles (100; GD-ROM 300) because the real BIOS
 entry runs a few hundred instructions before answering and games calibrate their polling against
@@ -74,6 +82,15 @@ contents are not yet saved to a file between runs.
 BIOS boot (r15 = 0x8D000000, GBR = VBR = 0x8C000000, SR 0x400000F1, FPSCR 0x00040001, the odd
 scratch registers included), writes the vectors and the SYSINFO block, and loads IP.BIN from the
 game area's first 16 sectors to 0x8C008000. The executable itself is placed by the launcher.
+
+The rest of the work area is erased to 0xFF, with one exception (2026-10-29). San Francisco Rush
+2049 checks that it runs on a real BIOS by summing four stretches of the BIOS's GD-ROM code there
+(from 0x8C0010F0, as signed halfwords), twice with different seeds and signs; both totals must come
+to zero. With the erased area the first check failed, and the game answers by re-initialising its
+menu every frame, which clears the pad before the menu reads it: the menu drew but took no input.
+The second check, made at boot, corrupts a saved register when it fails. `balance_bios_sums`
+(`runtime/src/hle/bios.cpp`) writes two of the four stretches so that both checks pass; Flycast's
+reios balances the first check only.
 
 ## Launcher
 
