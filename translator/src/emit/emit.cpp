@@ -246,10 +246,12 @@ public:
         out << "static void " << name << "__resume(Ctx& c, Memory& m, std::uint32_t resume_pc) {\n";
         out << "    [[maybe_unused]] const std::uint32_t entry_pr = c.pr;\n";
         // Poll points record the exact guest pc first: an interrupt handler that switches tasks
-        // returns through RTE to SPC, and run_guest re-enters this function there.
+        // returns through RTE to SPC, and run_guest re-enters this function there. On a resume
+        // that pc is resume_pc, not the entry: recording the entry restarts the function with the
+        // registers of its end once the task is switched back (Rush 2049, VMU task).
         if (opt_.irq_checks)
-            out << "    if (c.cycles >= c.next_event) { c.pc = " << hexu(spec_.entry)
-                << "; deliver_irq(c, m); }\n";
+            out << "    if (c.cycles >= c.next_event) { c.pc = resume_pc ? resume_pc : "
+                << hexu(spec_.entry) << "; deliver_irq(c, m); }\n";
         out << "    if (resume_pc) {\n        switch (resume_pc) {\n";
         for (std::uint32_t b : blocks_)
             out << "            case " << hexu(b) << ": goto " << label(b) << ";\n";
