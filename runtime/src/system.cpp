@@ -10,7 +10,99 @@
 #include "dream/runtime/devinterp/interpreter.h"
 #endif
 
+#include <cctype>
+#include <cstring>
+#include <vector>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+// windows.h first: dbghelp.h needs its types.
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
+#endif
+
 namespace dream {
+
+namespace {
+
+// DREAM_WATCH_CALL=addr,addr,...: when a call or jump through a register reaches one of these
+// untranslated targets, print the caller's registers and the guest call chain. Built for a title
+// that jumps to 0x00000000: the interpreter then faults on the target, and the caller is gone.
+bool watched_call(std::uint32_t target) {
+    static const std::vector<std::uint32_t> targets = [] {
+        std::vector<std::uint32_t> v;
+        const char* s = std::getenv("DREAM_WATCH_CALL");
+        for (const char* p = s ? s : ""; *p;) {
+            char* end = nullptr;
+            const unsigned long a = std::strtoul(p, &end, 0);
+            if (end == p)
+                break;
+            v.push_back(static_cast<std::uint32_t>(a) & 0x1FFFFFFFu);
+            p = (*end == ',') ? end + 1 : end;
+        }
+        return v;
+    }();
+    return std::find(targets.begin(), targets.end(), target & 0x1FFFFFFFu) != targets.end();
+}
+
+// Every guest function is emitted as a C++ function named fn_<8 hex digits>, so the host stack
+// gives the guest call chain, innermost first. Needs a build with debug info (a .pdb) on Windows.
+void print_guest_chain() {
+#if defined(_WIN32)
+    const HANDLE process = GetCurrentProcess();
+    static const bool ready = SymInitialize(process, nullptr, TRUE) != FALSE;
+    if (!ready) {
+        std::fprintf(stderr, "  guest call chain: no symbols\n");
+        return;
+    }
+    void* frames[62];
+    const USHORT n = CaptureStackBackTrace(0, 62, frames, nullptr);
+    alignas(SYMBOL_INFO) char buf[sizeof(SYMBOL_INFO) + 256];
+    auto* sym = reinterpret_cast<SYMBOL_INFO*>(buf);
+    std::fprintf(stderr, "  guest call chain (innermost first):\n");
+    unsigned shown = 0;
+    for (USHORT i = 0; i < n && shown < 16; ++i) {
+        std::memset(buf, 0, sizeof buf);
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0;
+        if (!SymFromAddr(process, reinterpret_cast<DWORD64>(frames[i]), &disp, sym))
+            continue;
+        const char* fn = std::strstr(sym->Name, "fn_");
+        bool emitted = fn != nullptr && std::strlen(fn) >= 11;
+        for (int k = 3; emitted && k < 11; ++k)
+            emitted = std::isxdigit(static_cast<unsigned char>(fn[k])) != 0;
+        if (!emitted)
+            continue;
+        std::fprintf(stderr, "    %.11s\n", fn);
+        ++shown;
+    }
+    if (shown == 0)
+        std::fprintf(stderr, "    (no emitted frames on the stack)\n");
+#else
+    std::fprintf(stderr, "  guest call chain: not implemented here; see DREAM_STOP_ON_UNMAPPED\n");
+#endif
+}
+
+void report_watched_call(const sh4::Ctx& c, ::dream::Memory& m, std::uint32_t target) {
+    std::fprintf(stderr, "watched call to 0x%08x: pc 0x%08x pr 0x%08x\n", target, c.pc, c.pr);
+    for (int i = 0; i < 16; i += 4)
+        std::fprintf(stderr, "  r%-2d %08x  r%-2d %08x  r%-2d %08x  r%-2d %08x\n", i, c.r[i], i + 1,
+                     c.r[i + 1], i + 2, c.r[i + 2], i + 3, c.r[i + 3]);
+    // The guest stack holds what the caller saved: return addresses and spilled arguments that
+    // the registers no longer show.
+    std::fprintf(stderr, "  stack at r15:");
+    for (std::uint32_t k = 0; k < 12; ++k)
+        std::fprintf(stderr, "%s %08x", k % 6 == 0 ? "\n   " : "", m.read32(c.r[15] + 4 * k));
+    std::fprintf(stderr, "\n");
+    print_guest_chain();
+}
+
+}  // namespace
+
+void print_guest_call_chain() {
+    print_guest_chain();
+}
 
 System::System() : tmu(sched, intc), holly(intc), spg(sched, holly) {
     memory.map_p4(sh4::Intc::kBase, sh4::Intc::kBase + 0x10, &intc);
@@ -153,6 +245,8 @@ void System::on_rte(sh4::Ctx& c, ::dream::Memory& m) {
 }
 
 void System::on_untranslated(sh4::Ctx& c, ::dream::Memory& m, std::uint32_t target) {
+    if (watched_call(target))
+        report_watched_call(c, m, target);
     // Recorded either way: the log is what the next translate pass reads (ADR 2).
     untranslated.record(target, 4, false);
     if (untranslated_sites.size() < 32)

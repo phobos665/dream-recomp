@@ -231,6 +231,9 @@ T DcMemory::load(std::uint32_t a) {
     if (t.kind == Target::kBytes) {
         T v;
         std::memcpy(&v, t.bytes, sizeof(T));
+        if (rwatch_lo < rwatch_hi && (a & 0x1FFFFFFFu) >= rwatch_lo &&
+            (a & 0x1FFFFFFFu) < rwatch_hi && on_watch_read)
+            on_watch_read(a, static_cast<std::uint32_t>(v), static_cast<unsigned>(sizeof(T)));
         return v;
     }
     if (t.kind == Target::kMmio) {

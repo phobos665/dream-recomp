@@ -1637,6 +1637,16 @@ int main(int argc, char** argv) {
         maple.attach_expansion(0, 0, std::move(card));
     }
     maple.attach(0, std::move(pad));
+    // DREAM_PAD_ALL_PORTS: the same pad on all four ports, for telling "the title reads another
+    // port" apart from "the title ignores the pad" (development aid).
+    std::vector<dream::maple::Controller*> mirror_pads;
+    if (std::getenv("DREAM_PAD_ALL_PORTS")) {
+        for (unsigned port = 1; port < dream::maple::Bus::kPorts; ++port) {
+            auto extra = std::make_unique<dream::maple::Controller>();
+            mirror_pads.push_back(extra.get());
+            maple.attach(port, std::move(extra));
+        }
+    }
     sys.memory.map_mmio(dream::maple::Bus::kBase, dream::maple::Bus::kEnd, &maple);
     // Scripted controller presses (--press start@120,a@300): each is held for 8 frames.
     std::vector<std::pair<std::uint64_t, std::uint16_t>> scripted;
@@ -1732,6 +1742,7 @@ int main(int argc, char** argv) {
                 ++recorded;
             }
         }
+        for (dream::maple::Controller* p : mirror_pads) p->state = pad_ptr->state;
         maple.vblank();
     };
 #ifdef DREAM_WITH_RENDERER
@@ -2021,10 +2032,32 @@ int main(int argc, char** argv) {
             colon ? static_cast<std::uint32_t>(std::strtoul(colon + 1, nullptr, 0)) : 4u;
         sys.memory.watch_lo = lo;
         sys.memory.watch_hi = lo + len;
+        // DREAM_WATCH_CHAIN as well: each write also prints the guest call chain.
+        static const bool chain = std::getenv("DREAM_WATCH_CHAIN") != nullptr;
         sys.memory.on_watch_write = [&](std::uint32_t a, std::uint32_t v, unsigned size) {
             std::fprintf(
                 stderr,
                 "watch: write%u 0x%08x = 0x%08x at pc 0x%08x pr 0x%08x r15 0x%08x frame %llu\n",
+                size * 8, a, v, sys.ctx.pc, sys.ctx.pr, sys.ctx.r[15],
+                static_cast<unsigned long long>(sys.spg.frames()));
+            if (chain)
+                dream::print_guest_call_chain();
+        };
+    }
+    // DREAM_WATCH_READ=addr[:len]: the same for loads from RAM. The pc is the last interrupt poll,
+    // which in translated code is the entry of the function doing the reading.
+    if (const char* rv = std::getenv("DREAM_WATCH_READ")) {
+        const std::uint32_t lo =
+            static_cast<std::uint32_t>(std::strtoul(rv, nullptr, 0)) & 0x1FFFFFFFu;
+        const char* colon = std::strchr(rv, ':');
+        const std::uint32_t len =
+            colon ? static_cast<std::uint32_t>(std::strtoul(colon + 1, nullptr, 0)) : 4u;
+        sys.memory.rwatch_lo = lo;
+        sys.memory.rwatch_hi = lo + len;
+        sys.memory.on_watch_read = [&](std::uint32_t a, std::uint32_t v, unsigned size) {
+            std::fprintf(
+                stderr,
+                "watch: read%u 0x%08x = 0x%08x at pc 0x%08x pr 0x%08x r15 0x%08x frame %llu\n",
                 size * 8, a, v, sys.ctx.pc, sys.ctx.pr, sys.ctx.r[15],
                 static_cast<unsigned long long>(sys.spg.frames()));
         };

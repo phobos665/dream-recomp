@@ -83,4 +83,9 @@ private:
     void arm_next_poll(sh4::Ctx& c) noexcept;
 };
 
+// Prints the guest call chain, innermost first, from the host stack (every emitted guest function
+// is a C++ function named fn_<address>). Needs debug information on Windows. For development
+// watches that want to say who did something, not just where the last poll was.
+void print_guest_call_chain();
+
 }  // namespace dream

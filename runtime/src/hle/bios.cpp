@@ -295,6 +295,14 @@ void Bios::sys_flashrom(sh4::Ctx& c, ::dream::Memory& m) {
             for (std::uint32_t i = 0; i < c.r[6]; ++i)
                 m.write8(c.r[5] + i, flash_.read8(c.r[4] + i));
             c.r[0] = 0;
+            // DREAM_TRACE_FLASH: what a title reads, for telling a missing setting from a bug.
+            static const bool trace = std::getenv("DREAM_TRACE_FLASH") != nullptr;
+            if (trace) {
+                std::fprintf(stderr, "flash read 0x%05x size %u:", c.r[4], c.r[6]);
+                for (std::uint32_t i = 0; i < c.r[6] && i < 32; ++i)
+                    std::fprintf(stderr, " %02x", flash_.read8(c.r[4] + i));
+                std::fprintf(stderr, "\n");
+            }
             break;
         }
         case 2: {  // FLASHROM_WRITE: r4 offset, r5 src, r6 size; returns bytes written
@@ -495,6 +503,14 @@ void Bios::gd_request(sh4::Ctx& c, ::dream::Memory& m) {
     }
     gd_.command = c.r[4];
     for (unsigned i = 0; i < 4; ++i) gd_.params[i] = c.r[5] ? m.read32(c.r[5] + 4 * i) : 0;
+    // DREAM_TRACE_GDROM_CHAIN: who asked, as a guest call chain (needs a build with debug info on
+    // Windows). Which loader issued a read is the question when a title stops loading.
+    static const bool chain = std::getenv("DREAM_TRACE_GDROM_CHAIN") != nullptr;
+    if (chain) {
+        std::fprintf(stderr, "gdrom request cmd 0x%02x params %08x %08x %08x %08x\n", gd_.command,
+                     gd_.params[0], gd_.params[1], gd_.params[2], gd_.params[3]);
+        print_guest_call_chain();
+    }
     gd_.result[0] = gd_.result[1] = gd_.result[2] = gd_.result[3] = 0;
     gd_.read_total = gd_.read_remaining = 0;
     gd_.status = GDC_BUSY;
