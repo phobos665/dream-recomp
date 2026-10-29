@@ -15,6 +15,10 @@ Flycast's reios and the KallistiOS headers (GPL-2.0 derivation per ADR 1).
 | 0x8C0000BC misc | r6 = -1, r7 | MISC_INIT, MISC_SETVECTOR (accepted, no effect) |
 | 0x8C0000E0 system | r4 | normal init, check disc, exit to menu (no-op) |
 
+The GD-ROM handler is also registered at 0x8C0010F0, where the real BIOS's second GD-ROM entry is:
+titles call it there directly rather than through the C0 vector (Rush 2049 does), and with the work
+area erased to 0xFF anything else at that address is an 0xFFFF instruction (2026-10-29).
+
 ## GD-ROM command queue
 
 One command at a time. `REQ_CMD` copies the four parameter words and returns a request id (0 while
