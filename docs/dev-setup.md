@@ -56,8 +56,11 @@ That bundle replays offline, so the frame can be looked at again without the gam
 build/dream-dev/render/dream_render_view --vram capture-000.vram capture-000.ta
 ```
 
-`F12` writes just the picture, for when the picture is the whole story. `--screenshot-at N` and
-`--capture-at N` do the same at the Nth presented frame, for a run with nobody at the keyboard.
+`F12` writes just the picture, for when the picture is the whole story. `--screenshot-at N[,N...]`
+and `--capture-at N` do the same at the Nth presented frame, for a run with nobody at the keyboard.
+`--no-input` keeps the keyboard and any pad out of such a run, so `--press` drives it the same way
+whoever is at the machine; besides buttons, `--press` takes `stick_up`, `stick_down`,
+`stick_left`, `stick_right`, `ltrigger` and `rtrigger`, held fully over.
 
 A report is most useful as: what you did, what you expected, what happened, and the capture bundle.
 A screenshot alone shows the symptom; the bundle lets the same frame be drawn again and taken

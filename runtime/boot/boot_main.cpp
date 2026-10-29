@@ -362,7 +362,7 @@ struct Live {
             screenshot();
         if (window.pressed(dream::render::vk::Control::Capture))
             capture();
-        if (screenshot_at && presented == screenshot_at)
+        if (std::find(screenshot_at.begin(), screenshot_at.end(), presented) != screenshot_at.end())
             screenshot();
         if (capture_at && presented == capture_at)
             capture();
@@ -701,8 +701,10 @@ struct Live {
     bool rearm_escape = false;
     // --screenshot-at N / --capture-at N: the same thing F12 and F11 do, at the Nth presented
     // frame, for a run with nobody at the keyboard. These were environment variables, which is
-    // fine for a one-off and wrong for something the documentation tells people to use.
-    std::uint64_t screenshot_at = 0, capture_at = 0;
+    // fine for a one-off and wrong for something the documentation tells people to use. Several
+    // screenshots may be asked for, to follow a scripted run through its screens.
+    std::vector<std::uint64_t> screenshot_at;
+    std::uint64_t capture_at = 0;
     std::chrono::steady_clock::time_point fps_mark{};
     std::uint64_t fps_frames_at_mark = 0;
     double fps_guest_at_mark = 0;
@@ -1149,7 +1151,9 @@ void usage(const char* argv0, std::FILE* out) {
         "Reproducing a run:\n"
         "  --rtc-seed N           fix the console clock so two runs do the same thing\n"
         "  --press B@F[,B@F...]   hold a button for 8 frames from frame F (a b c x y z start\n"
-        "                         up down left right), to get past screens that wait for input\n"
+        "                         up down left right), to get past screens that wait for input;\n"
+        "                         also stick_up stick_down stick_left stick_right ltrigger\n"
+        "                         rtrigger, fully over\n"
         "  --record-input FILE    write the controller state of every frame where it changes\n"
         "  --replay-input FILE    play a recording back instead of reading the controls. With the\n"
         "                         same --rtc-seed, boot ROM and memory-card image the run repeats\n"
@@ -1167,7 +1171,8 @@ void usage(const char* argv0, std::FILE* out) {
         "  --dump-vram FILE       video memory and the PVR registers from the same instant\n"
         "  --dump-aram FILE       the 2 MB of sound RAM at the stop\n"
         "  --dump FILE            a memory range at the stop\n"
-        "  --screenshot-at N      write a screenshot at the Nth presented frame (F12 by hand)\n"
+        "  --screenshot-at N[,N]  write a screenshot at the Nth presented frame (F12 by hand)\n"
+        "  --no-input             with a window, read no keyboard or pad: --press alone drives\n"
         "  --capture-at N         write a full frame capture at the Nth (F11 by hand)\n"
         "  --wav FILE             record the audio as 16-bit stereo 44.1 kHz\n"
         "  --sample N             sample the CPU every N cycles (--sample-file FILE)\n"
@@ -1251,7 +1256,11 @@ int main(int argc, char** argv) {
     bool start_with_fps = false;
     // --suggest-config FILE: the TOML this run earned, ready to paste into the game's config.
     std::string suggest_config;
-    std::uint64_t screenshot_at = 0, capture_at = 0;
+    std::vector<std::uint64_t> screenshot_at;  // --screenshot-at N[,N...]
+    std::uint64_t capture_at = 0;
+    // --no-input: the window reads no keyboard or pad into the guest's controller, so a scripted
+    // run (--press) does exactly the same thing whoever is at the machine.
+    bool no_input = false;
     unsigned scale = 1;
     // --rtc-seed N: a fixed console clock, so two runs of the same build do the same thing and can
     // be compared. Any non-zero value will do; the number itself only changes the date a title
@@ -1355,8 +1364,17 @@ int main(int argc, char** argv) {
             start_with_fps = true;
         else if (!std::strcmp(argv[i], "--suggest-config") && i + 1 < argc)
             suggest_config = argv[++i];
-        else if (!std::strcmp(argv[i], "--screenshot-at") && i + 1 < argc)
-            screenshot_at = std::strtoull(argv[++i], nullptr, 0);
+        else if (!std::strcmp(argv[i], "--screenshot-at") && i + 1 < argc) {
+            for (const char* p = argv[++i]; *p;) {
+                char* end = nullptr;
+                const unsigned long long n = std::strtoull(p, &end, 0);
+                if (end == p)
+                    break;
+                screenshot_at.push_back(n);
+                p = *end == ',' ? end + 1 : end;
+            }
+        } else if (!std::strcmp(argv[i], "--no-input"))
+            no_input = true;
         else if (!std::strcmp(argv[i], "--capture-at") && i + 1 < argc)
             capture_at = std::strtoull(argv[++i], nullptr, 0);
         else if (!std::strcmp(argv[i], "--rtc-seed") && i + 1 < argc)
@@ -1648,18 +1666,26 @@ int main(int argc, char** argv) {
         }
     }
     sys.memory.map_mmio(dream::maple::Bus::kBase, dream::maple::Bus::kEnd, &maple);
-    // Scripted controller presses (--press start@120,a@300): each is held for 8 frames.
-    std::vector<std::pair<std::uint64_t, std::uint16_t>> scripted;
+    // Scripted controller presses (--press start@120,a@300): each is held for 8 frames. Buttons
+    // are the low sixteen bits, as the controller has them; the stick and the triggers, which a
+    // menu may read instead of the d-pad, are the bits above.
+    constexpr std::uint32_t kStickUp = 1u << 16, kStickDown = 1u << 17, kStickLeft = 1u << 18,
+                            kStickRight = 1u << 19, kLTrigger = 1u << 20, kRTrigger = 1u << 21;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> scripted;
+    bool scripted_held = false;  // a scripted input is down this frame: the window keeps off it
     {
         static const struct {
             const char* name;
-            std::uint16_t bit;
+            std::uint32_t bit;
         } kNames[] = {{"c", dream::maple::kC},       {"b", dream::maple::kB},
                       {"a", dream::maple::kA},       {"start", dream::maple::kStart},
                       {"up", dream::maple::kUp},     {"down", dream::maple::kDown},
                       {"left", dream::maple::kLeft}, {"right", dream::maple::kRight},
                       {"z", dream::maple::kZ},       {"y", dream::maple::kY},
-                      {"x", dream::maple::kX}};
+                      {"x", dream::maple::kX},       {"stick_up", kStickUp},
+                      {"stick_down", kStickDown},    {"stick_left", kStickLeft},
+                      {"stick_right", kStickRight},  {"ltrigger", kLTrigger},
+                      {"rtrigger", kRTrigger}};
         std::string rest = presses;
         while (!rest.empty()) {
             const std::size_t comma = rest.find(',');
@@ -1723,11 +1749,17 @@ int main(int argc, char** argv) {
         while (replay_next < replayed.size() && replayed[replay_next].first <= f)
             pad_ptr->state = replayed[replay_next++].second;
         if (!scripted.empty()) {
-            std::uint16_t held = 0;
+            std::uint32_t held = 0;
             for (const auto& [start, bit] : scripted)
                 if (f >= start && f < start + 8)
                     held |= bit;
-            pad_ptr->state.buttons = static_cast<std::uint16_t>(0xFFFFu & ~held);
+            scripted_held = held != 0;
+            auto& st = pad_ptr->state;
+            st.buttons = static_cast<std::uint16_t>(0xFFFFu & ~held);
+            st.joy_x = (held & kStickLeft) ? 0x00 : (held & kStickRight) ? 0xFF : 0x80;
+            st.joy_y = (held & kStickUp) ? 0x00 : (held & kStickDown) ? 0xFF : 0x80;
+            st.ltrigger = (held & kLTrigger) ? 0xFF : 0x00;
+            st.rtrigger = (held & kRTrigger) ? 0xFF : 0x00;
         }
         if (record_file) {
             const Pad& p = pad_ptr->state;
@@ -1805,8 +1837,9 @@ int main(int argc, char** argv) {
                 }
                 paused_for += std::chrono::steady_clock::now() - paused_at;
             }
-            // Scripted presses win while they are held, so --press still works with a window open.
-            if (replayed.empty() && (scripted.empty() || pad_ptr->state.buttons == 0xFFFFu))
+            // Scripted presses win while they are held, so --press still works with a window open;
+            // a replay or --no-input keeps the window's controls out altogether.
+            if (replayed.empty() && !no_input && !scripted_held)
                 live->read_controls(pad_ptr->state);
             if (unthrottled)
                 return;
