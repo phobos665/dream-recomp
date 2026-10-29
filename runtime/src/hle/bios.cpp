@@ -330,10 +330,34 @@ void Bios::gd_exec(::dream::Memory& m) {
             gd_.status = GDC_COMPLETE;
             break;
         case CMD_DMAREAD:
-        case CMD_PIOREAD:
             if (gd_.read_remaining == 0 && gd_.read_total == 0)
                 gd_start_read();
-            return;          // completes from the scheduler
+            return;  // completes from the scheduler
+        case CMD_PIOREAD: {
+            // A PIO read completes at once and raises nothing, as Flycast's reios has it. Run like
+            // a DMA read -- spread over the scheduler, ended by the G1 DMA-end interrupt -- it
+            // starved Rush 2049's Sofdec intro videos, which stream through PIO reads: the YUV
+            // converter was fed about a hundred and thirtieth of what it is fed now.
+            std::uint32_t sector = (gd_.params[0] & 0xFFFFFFu) - gdrom::kFadOffset;
+            std::uint32_t dest = gd_.params[2];
+            const std::uint32_t count = gd_.params[1];
+            std::uint8_t data[2048];
+            for (std::uint32_t i = 0; i < count; ++i) {
+                if (disc_ && disc_->read_user(sector, data))
+                    write_sector(m, dest, data);
+                else
+                    ++counts["gdrom.read_miss"];
+                ++sector;
+                dest += 2048;
+                ++sectors_read;
+            }
+            gd_.read_remaining = 0;
+            gd_.read_total = count;
+            gd_.result[2] = count * 2048;
+            gd_.result[3] = 0;
+            gd_.status = GDC_COMPLETE;
+            break;
+        }
         case CMD_GETTOC2: {  // params: area, dest
             std::uint32_t toc[102];
             if (disc_)

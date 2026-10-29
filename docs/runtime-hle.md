@@ -34,6 +34,10 @@ scheduler to the caller's clock first, so a game that polls every frame sees the
 would see on hardware, and a completed read raises the Holly GD-DMA interrupt. Parameters are FADs
 (LBA + 150); data lands through the RAM fast path when the destination is main RAM.
 
+PIOREAD is the exception (2026-10-29): it completes at once and raises nothing, as reios has it.
+Rush 2049 streams its Sofdec intro videos through PIO reads, and while they ran like DMA reads the
+YUV converter was fed about a hundred and thirtieth of the stream.
+
 Timing (2026-09-12): every syscall charges guest cycles (100; GD-ROM 300) because the real BIOS
 entry runs a few hundred instructions before answering and games calibrate their polling against
 that. Crazy Taxi retries a status check 120 times; at zero cost the loop expired before a 4096-cycle
