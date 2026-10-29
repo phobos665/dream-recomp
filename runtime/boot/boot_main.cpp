@@ -15,9 +15,12 @@
 #if defined(__APPLE__) || defined(__linux__)
 #include <execinfo.h>
 #endif
+#include <array>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -29,6 +32,7 @@
 #include "dream/runtime/holly/g2dma.h"
 #include "dream/runtime/holly/sysblock.h"
 #include "dream/runtime/maple/maple.h"
+#include "dream/runtime/maple/vmu_fs.h"
 #include "dream/runtime/mem/dc_memory.h"
 #include "dream/runtime/pvr/core.h"
 #include "dream/runtime/sh4/abi.h"
@@ -49,8 +53,8 @@
 #include "dream/render/background.h"
 #include "dream/render/display_list.h"
 #include "dream/render/framebuffer.h"
-#include "dream/render/input_menu.h"
 #include "dream/render/overlay.h"
+#include "dream/render/settings_menu.h"
 #include "dream/render/vk/offscreen.h"
 #include "dream/render/vk/present.h"
 #include "dream/render/vk/renderer.h"
@@ -98,6 +102,46 @@ void print_guest_backtrace() {
 #else
     std::fprintf(stderr, "  guest call chain: not available on this platform\n");
 #endif
+}
+
+// A memory card for one of the pad's slots, from `path`. A missing file becomes a blank, formatted
+// card when `create` allows: titles do not all offer to format a blank card -- Crazy Taxi reads
+// the system block, finds no marker and simply refuses to save -- so an empty file would be no
+// better than none. Anything that is not exactly a card is refused and never written to: save()
+// rewrites the whole 128 KB after every block write, so adopting a file that is not a card would
+// destroy it the moment the title saved. Null on failure, with the reason printed.
+std::unique_ptr<dream::maple::MemoryCard> open_card(const std::string& path, bool create) {
+    auto card = std::make_unique<dream::maple::MemoryCard>();
+    switch (card->load(path)) {
+        case dream::maple::CardStatus::Ok:
+            std::printf("memory card %s: %s\n", path.c_str(),
+                        card->formatted() ? "formatted" : "present but not formatted");
+            return card;
+        case dream::maple::CardStatus::Missing:
+            if (!create) {
+                std::fprintf(stderr, "no memory card at %s (drop --no-create-vmu to make one)\n",
+                             path.c_str());
+                return nullptr;
+            }
+            card->format();
+            if (!card->save_as(path)) {
+                std::fprintf(stderr, "cannot create a memory card at %s\n", path.c_str());
+                return nullptr;
+            }
+            std::printf("memory card %s: created, formatted and empty\n", path.c_str());
+            return card;
+        case dream::maple::CardStatus::WrongSize:
+            std::fprintf(stderr,
+                         "%s is not a memory card image: a card is exactly %zu bytes.\n"
+                         "Refusing to touch it. Point --vmu at a card, or at a path that does "
+                         "not exist yet and one will be made.\n",
+                         path.c_str(), dream::maple::MemoryCard::kImageSize);
+            return nullptr;
+        case dream::maple::CardStatus::Unreadable:
+            std::fprintf(stderr, "cannot read the memory card image %s\n", path.c_str());
+            return nullptr;
+    }
+    return nullptr;
 }
 
 #ifdef DREAM_WITH_RENDERER
@@ -284,6 +328,7 @@ struct Live {
         if (!window.poll())
             return false;
         update_counter(guest_cycles);
+        report_controllers();
         pump_menu();
 
         dream::render::FramebufferInfo fb;
@@ -306,6 +351,15 @@ struct Live {
         }
         if (!have_frame)
             return true;  // nothing displayable yet: the window keeps its cleared background
+        // --settings: up as soon as there is a frame to draw it over, which is before a title has
+        // looked for its memory card, so a card chosen here is the one it finds.
+        if (open_at_start || (open_at_frame && frame >= open_at_frame)) {
+            open_at_start = false;
+            open_at_frame = 0;
+            open_menu(open_tab);
+        }
+        if (menu.is_open())
+            refresh_slots();
 
         std::uint32_t image = 0;
         VkCommandBuffer cmd = VK_NULL_HANDLE;
@@ -325,7 +379,7 @@ struct Live {
                                      draw_counter(px, w, h);
                                  // Last, so the screen sits over the counter rather than under it.
                                  if (menu.is_open())
-                                     menu.draw(px, w, w, h, window.devices());
+                                     menu.draw(px, w, w, h, window.devices(), pad_preview(), art);
                              });
         else
             presenter.upload(cmd, source, shown.width, shown.height);
@@ -444,6 +498,10 @@ struct Live {
                 close_menu();
             return;
         }
+        if (window.pressed(Control::PrevTab))
+            menu.switch_tab(-1);
+        if (window.pressed(Control::NextTab))
+            menu.switch_tab(1);
         if (window.pressed(Control::Up))
             menu.move(-1);
         if (window.pressed(Control::Down))
@@ -456,10 +514,13 @@ struct Live {
         if (window.pressed(Control::Right))
             menu.adjust(1, devices);
         if (window.pressed(Control::Start) || window.pressed(Control::A)) {
-            if (menu.activate() == dream::render::InputMenu::Action::Close) {
+            const auto action = menu.activate(devices);
+            if (action == dream::render::SettingsMenu::Action::Close) {
                 close_menu();
                 return;
             }
+            if (action == dream::render::SettingsMenu::Action::Swap)
+                swap_card(menu.swap_slot(), menu.swap_choice());
             // Activating a binding row asks for an input; the window collects it for us.
             if (menu.awaiting())
                 window.begin_capture();
@@ -467,12 +528,139 @@ struct Live {
         apply_bindings();
     }
 
-    void open_menu() {
-        menu.open(window.bindings());
+    void open_menu(
+        dream::render::SettingsMenu::Tab tab = dream::render::SettingsMenu::Tab::Controller) {
+        menu.open(window.bindings(), tab);
+        menu.set_card_files(list_card_files());
+        refresh_slots();
         bindings_dirty = false;
         rearm_escape = false;
         // While the screen is up, escape backs out of it rather than ending the run.
         window.set_escape_quits(false);
+    }
+
+    // --- the settings screen's pictures and the memory cards -----------------------------------
+
+    // What the pad is doing, through the player's bindings, for the controller tab's live test.
+    dream::render::PadPreview pad_preview() const {
+        dream::render::PadPreview p;
+        for (unsigned i = 0; i < dream::render::kPadControlCount; ++i) {
+            const auto c = static_cast<dream::render::PadControl>(i);
+            p.held[i] = window.pad_held(c);
+            p.value[i] = window.pad_value(c);
+        }
+        return p;
+    }
+
+    // --ui-assets DIR: the player's own pictures. Each is optional, and a missing one only leaves
+    // its place on the screen empty.
+    void load_art(const std::string& dir) {
+        namespace fs = std::filesystem;
+        auto read_text = [](const fs::path& p) {
+            std::ifstream in(p, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        };
+        auto picture = [&](const char* name, dream::render::Image& out) {
+            const fs::path p = fs::path(dir) / name;
+            std::string err;
+            if (dream::render::vk::load_png(p.string(), out, &err))
+                std::printf("settings picture %s: %ux%u\n", p.string().c_str(), out.width,
+                            out.height);
+            else
+                std::fprintf(stderr, "settings picture %s: %s\n", p.string().c_str(), err.c_str());
+        };
+        picture("controller.png", art.controller);
+        picture("controller_back.png", art.controller_back);
+        picture("vmu.png", art.vmu);
+        std::string warnings;
+        art.front = dream::render::parse_hotspots(read_text(fs::path(dir) / "controller.hotspots"),
+                                                  &warnings);
+        art.back = dream::render::parse_hotspots(
+            read_text(fs::path(dir) / "controller_back.hotspots"), &warnings);
+        art.lcd = dream::render::parse_lcd_placement(read_text(fs::path(dir) / "vmu.hotspots"));
+        if (!warnings.empty())
+            std::fprintf(stderr, "settings hotspots:\n%s", warnings.c_str());
+    }
+
+    // The cards the screen offers: every file in the card directory that is exactly a card.
+    std::vector<std::string> list_card_files() const {
+        namespace fs = std::filesystem;
+        std::vector<std::string> out;
+        std::error_code ec;
+        if (card_dir.empty() || !fs::is_directory(card_dir, ec))
+            return out;
+        for (const auto& e : fs::directory_iterator(card_dir, ec)) {
+            if (!e.is_regular_file(ec) || e.file_size(ec) != dream::maple::MemoryCard::kImageSize)
+                continue;
+            out.push_back(e.path().filename().string());
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+
+    // What each slot holds, for the screen. The listing is re-read only when the card has been
+    // written since; the screen is copied every frame, so the card's picture is live.
+    void refresh_slots() {
+        for (unsigned slot = 0; slot < dream::render::SettingsMenu::kSlots; ++slot) {
+            dream::render::SlotView v;
+            const dream::maple::MemoryCard* card = cards[slot];
+            if (card) {
+                v.file = std::filesystem::path(card->path()).filename().string();
+                if (listed_writes[slot] != card->block_writes || listed_card[slot] != card) {
+                    listed[slot] = dream::maple::read_vmu(card->image());
+                    listed_writes[slot] = card->block_writes;
+                    listed_card[slot] = card;
+                }
+                v.contents = listed[slot];
+                v.lcd = card->lcd();
+                v.lcd_drawn = card->screen_writes > 0;
+            }
+            menu.set_slot(slot, std::move(v));
+        }
+    }
+
+    // A slot's contents changed from the screen, as plugging a card in or pulling it out of a pad
+    // would. The title is stopped while this happens and finds out at its next look at the bus.
+    void swap_card(unsigned slot, const dream::render::SettingsMenu::Choice& choice) {
+        using Kind = dream::render::SettingsMenu::Choice::Kind;
+        if (!maple || slot >= cards.size())
+            return;
+        namespace fs = std::filesystem;
+        std::unique_ptr<dream::maple::MemoryCard> card;
+        switch (choice.kind) {
+            case Kind::Empty:
+            case Kind::Rumble:
+                break;
+            case Kind::Card:
+                card = open_card((fs::path(card_dir) / choice.file).string(), false);
+                if (!card)
+                    return;  // the reason is printed; the slot keeps what it had
+                break;
+            case Kind::NewCard: {
+                // The first free name, so a new card never lands on an old one.
+                fs::path p;
+                for (unsigned n = 1; n < 1000; ++n) {
+                    p = fs::path(card_dir.empty() ? "." : card_dir) /
+                        ("vmu-" + std::to_string(n) + ".bin");
+                    std::error_code ec;
+                    if (!fs::exists(p, ec))
+                        break;
+                }
+                card = open_card(p.string(), true);
+                if (!card)
+                    return;
+                break;
+            }
+        }
+        cards[slot] = card.get();
+        maple->attach_expansion(0, slot, std::move(card));
+        if (slot == 0 && report_card)
+            *report_card = cards[0];  // the end-of-run report reads the card in the first slot
+        std::printf("slot A%u: %s\n", slot + 1,
+                    cards[slot] ? cards[slot]->path().c_str() : "empty");
+        menu.set_card_files(list_card_files());
+        refresh_slots();
     }
 
     void close_menu() {
@@ -690,15 +878,41 @@ struct Live {
     // looks (frames actually presented per second of wall clock) and whether it is keeping up
     // (guest time elapsed per second of wall clock, where 1.00x is the console's own pace).
     bool show_fps = false;
-    // The binding screen (F1, or a pad's select button). The guest is stopped while it is up, so
-    // nobody rebinds a control mid-corner.
-    dream::render::InputMenu menu;
+    // The settings screen (F1, or a pad's select button): the controller's bindings and the memory
+    // cards. The guest is stopped while it is up, so nobody rebinds a control mid-corner and no
+    // card is pulled out mid-save.
+    dream::render::SettingsMenu menu;
+    dream::render::SettingsArt art;   // --ui-assets: the player's own pictures, all optional
+    bool open_at_start = false;       // --settings
+    std::uint64_t open_at_frame = 0;  // --settings-at N
+    dream::render::SettingsMenu::Tab open_tab = dream::render::SettingsMenu::Tab::Controller;
+    // The pad's two expansion slots in port A, which the memory card tab can change.
+    dream::maple::Bus* maple = nullptr;
+    std::array<dream::maple::MemoryCard*, 2> cards{};
+    std::string card_dir;  // where the screen looks for cards, and makes new ones
+    dream::maple::MemoryCard** report_card = nullptr;  // main()'s pointer to the card in slot A1
+    std::array<dream::maple::VmuContents, 2> listed{};
+    std::array<std::uint64_t, 2> listed_writes{};
+    std::array<const dream::maple::MemoryCard*, 2> listed_card{};
     // Where a change is written back. Empty means this run only: --bindings was pointed nowhere
     // usable, or SDL could not name a settings directory on this host.
     std::string bindings_path;
     bool bindings_dirty = false;  // changed since the screen was opened
     // Escape closes the screen and also quits: quit stays disarmed until the key comes back up.
     bool rearm_escape = false;
+    // The controller list as last printed. On Windows SDL can find a pad a moment after the window
+    // opens, so the list is printed whenever it changes rather than once at start.
+    std::vector<std::string> reported_devices;
+
+    void report_controllers() {
+        const auto& devs = window.devices();
+        if (devs == reported_devices)
+            return;
+        reported_devices = devs;
+        std::string names;
+        for (std::size_t i = 1; i < devs.size(); ++i) names += ", " + devs[i];
+        std::printf("controllers: keyboard%s\n", names.empty() ? " (no pad found)" : names.c_str());
+    }
     // --screenshot-at N / --capture-at N: the same thing F12 and F11 do, at the Nth presented
     // frame, for a run with nobody at the keyboard. These were environment variables, which is
     // fine for a one-off and wrong for something the documentation tells people to use. Several
@@ -807,6 +1021,16 @@ std::string report_text(dream::System& sys, dream::hle::Bios& bios, const dream:
                       static_cast<unsigned long long>(card_ptr->media_info_reads),
                       static_cast<unsigned long long>(card_ptr->screen_writes));
         s += buf;
+        // What the title last drew on the card's screen, so a headless run can show it too.
+        if (card_ptr->screen_writes) {
+            s += "memory card screen:\n";
+            for (unsigned y = 0; y < dream::maple::MemoryCard::kLcdHeight; ++y) {
+                s += "  ";
+                for (unsigned x = 0; x < dream::maple::MemoryCard::kLcdWidth; ++x)
+                    s += dream::maple::lcd_pixel(card_ptr->lcd(), x, y) ? '#' : '.';
+                s += '\n';
+            }
+        }
     }
     {
         s += "maple frames by recipient:";
@@ -1129,6 +1353,14 @@ void usage(const char* argv0, std::FILE* out) {
         "  --bios FILE            a 2 MB boot ROM image. Titles draw system text with its font;\n"
         "                         without it that text is blank. The BIOS calls stay native\n"
         "  --vmu FILE             a 128 KB memory-card image; writes are saved back to it.\n"
+        "  --vmu2 FILE            the same, in the pad's second expansion slot\n"
+        "  --vmu-dir DIR          where the settings screen lists and makes cards (default:\n"
+        "                         the directory of --vmu)\n"
+        "  --ui-assets DIR        pictures for the settings screen: controller.png,\n"
+        "                         controller_back.png, vmu.png and their .hotspots files\n"
+        "  --settings             open the settings screen (controller, memory cards) at start\n"
+        "  --settings-at N        open it at guest frame N instead, for a scripted run\n"
+        "  --settings-tab T       controller (default) or memory: the tab it opens on\n"
         "  --flash FILE           a 128 KB console flash image; without it one is synthesised\n"
         "                         Created, blank and formatted, if the path does not exist. A "
         "file\n"
@@ -1219,23 +1451,30 @@ int main(int argc, char** argv) {
     // the host's per-user settings directory, so one layout follows the player across every title.
     std::string bindings_file;
     bool bindings_file_set = false;
-    std::string flash_dump;           // --dump-flash FILE: write the flash out at the stop, so a
-                                      // synthesised one can be compared against a reference.
-    std::string bios_image;           // --bios FILE: the owner's 2 MB boot ROM. Only its data is
-                                      // used: the font call returns an address in it. The BIOS
-                                      // calls stay native. Never committed: owner data.
-    std::string flash_image;          // --flash FILE: a 128 KB console flash image. The runtime
-                                      // synthesises one when this is absent, which is enough for
-                                      // some titles and not others: a title that reads the user's
-                                      // settings out of the flash user partition may refuse to
-                                      // start on a synthetic one.
-    std::string vmu;                  // --vmu FILE: a 128 KB memory-card image in the standard
-                                      // layout, as any Dreamcast tool or emulator writes. Writes
-                                      // go back to the file. Never committed: owner data.
-    std::string dump_vram;            // --dump-vram FILE: video memory and the PVR registers, so
-                                      // the renderer's tools can decode a capture's textures
-    std::uint64_t dump_ta_frame = 0;  // --dump-ta-frame N: which render to capture (default: the
-                                      // first with more than a token amount of geometry)
+    std::string flash_dump;      // --dump-flash FILE: write the flash out at the stop, so a
+                                 // synthesised one can be compared against a reference.
+    std::string bios_image;      // --bios FILE: the owner's 2 MB boot ROM. Only its data is
+                                 // used: the font call returns an address in it. The BIOS
+                                 // calls stay native. Never committed: owner data.
+    std::string flash_image;     // --flash FILE: a 128 KB console flash image. The runtime
+                                 // synthesises one when this is absent, which is enough for
+                                 // some titles and not others: a title that reads the user's
+                                 // settings out of the flash user partition may refuse to
+                                 // start on a synthetic one.
+    std::string vmu;             // --vmu FILE: a 128 KB memory-card image in the standard
+                                 // layout, as any Dreamcast tool or emulator writes. Writes
+                                 // go back to the file. Never committed: owner data.
+    std::string vmu2;            // --vmu2 FILE: the same, in the pad's second slot
+    std::string vmu_dir;         // --vmu-dir DIR: where the settings screen finds and makes cards
+                                 // (default: beside --vmu)
+    std::string ui_assets;       // --ui-assets DIR: the player's pictures for the settings screen
+    bool open_settings = false;  // --settings: open the settings screen at the first frame
+    std::uint64_t settings_at = 0;     // --settings-at N: open it at guest frame N instead
+    bool settings_memory_tab = false;  // --settings-tab memory: on the memory card tab
+    std::string dump_vram;             // --dump-vram FILE: video memory and the PVR registers, so
+                                       // the renderer's tools can decode a capture's textures
+    std::uint64_t dump_ta_frame = 0;   // --dump-ta-frame N: which render to capture (default: the
+                                       // first with more than a token amount of geometry)
     // --dump-ta-at-frame N: the first render at or after guest frame N. A visual fault is noticed
     // at a moment in the run, and the render index for that moment is not stable between runs.
     std::uint64_t dump_ta_at_frame = 0;
@@ -1340,6 +1579,18 @@ int main(int argc, char** argv) {
             flash_dump = argv[++i];
         } else if (!std::strcmp(argv[i], "--vmu") && i + 1 < argc)
             vmu = argv[++i];
+        else if (!std::strcmp(argv[i], "--vmu2") && i + 1 < argc)
+            vmu2 = argv[++i];
+        else if (!std::strcmp(argv[i], "--vmu-dir") && i + 1 < argc)
+            vmu_dir = argv[++i];
+        else if (!std::strcmp(argv[i], "--ui-assets") && i + 1 < argc)
+            ui_assets = argv[++i];
+        else if (!std::strcmp(argv[i], "--settings"))
+            open_settings = true;
+        else if (!std::strcmp(argv[i], "--settings-at") && i + 1 < argc)
+            settings_at = std::strtoull(argv[++i], nullptr, 0);
+        else if (!std::strcmp(argv[i], "--settings-tab") && i + 1 < argc)
+            settings_memory_tab = !std::strcmp(argv[++i], "memory");
         else if (!std::strcmp(argv[i], "--dump-ta-frame") && i + 1 < argc)
             dump_ta_frame = std::strtoull(argv[++i], nullptr, 0);
         else if (!std::strcmp(argv[i], "--dump-ta-at-frame") && i + 1 < argc)
@@ -1612,47 +1863,23 @@ int main(int argc, char** argv) {
     dream::maple::Bus maple(sys.sched, sys.holly, sys.memory);
     auto pad = std::make_unique<dream::maple::Controller>();
     dream::maple::Controller* pad_ptr = pad.get();
-    // A memory card in the controller's first expansion slot, where the hardware puts one.
+    // Memory cards in the controller's two expansion slots: --vmu in the first, where the hardware
+    // normally has one, and --vmu2 in the second.
     dream::maple::MemoryCard* card_ptr = nullptr;
+    dream::maple::MemoryCard* card2_ptr = nullptr;
     if (!vmu.empty()) {
-        auto card = std::make_unique<dream::maple::MemoryCard>();
-        switch (card->load(vmu)) {
-            case dream::maple::CardStatus::Ok:
-                std::printf("memory card %s: %s\n", vmu.c_str(),
-                            card->formatted() ? "formatted" : "present but not formatted");
-                break;
-            case dream::maple::CardStatus::Missing:
-                // Made only when nothing is there. Titles do not all offer to format a blank card
-                // -- Crazy Taxi reads the system block, finds no marker and simply refuses to save
-                // -- so an empty file would be no better than none.
-                if (no_create_vmu) {
-                    std::fprintf(stderr,
-                                 "no memory card at %s (drop --no-create-vmu to make one)\n",
-                                 vmu.c_str());
-                    return 2;
-                }
-                card->format();
-                if (!card->save_as(vmu)) {
-                    std::fprintf(stderr, "cannot create a memory card at %s\n", vmu.c_str());
-                    return 2;
-                }
-                std::printf("memory card %s: created, formatted and empty\n", vmu.c_str());
-                break;
-            case dream::maple::CardStatus::WrongSize:
-                // Never overwritten. save() rewrites the whole 128 KB after every block write, so
-                // adopting a file that is not a card destroys it the moment the title saves.
-                std::fprintf(stderr,
-                             "%s is not a memory card image: a card is exactly %zu bytes.\n"
-                             "Refusing to touch it. Point --vmu at a card, or at a path that does "
-                             "not exist yet and one will be made.\n",
-                             vmu.c_str(), dream::maple::MemoryCard::kImageSize);
-                return 2;
-            case dream::maple::CardStatus::Unreadable:
-                std::fprintf(stderr, "cannot read the memory card image %s\n", vmu.c_str());
-                return 2;
-        }
+        auto card = open_card(vmu, !no_create_vmu);
+        if (!card)
+            return 2;
         card_ptr = card.get();
         maple.attach_expansion(0, 0, std::move(card));
+    }
+    if (!vmu2.empty()) {
+        auto card = open_card(vmu2, !no_create_vmu);
+        if (!card)
+            return 2;
+        card2_ptr = card.get();
+        maple.attach_expansion(0, 1, std::move(card));
     }
     maple.attach(0, std::move(pad));
     // DREAM_PAD_ALL_PORTS: the same pad on all four ports, for telling "the title reads another
@@ -1802,7 +2029,27 @@ int main(int argc, char** argv) {
         live->bindings_path =
             bindings_file_set ? bindings_file : dream::render::vk::default_bindings_path();
         live->load_bindings();
-        std::printf("F1 (or a pad's select button) opens the controller bindings\n");
+        // Which pads SDL found, so "my pad does nothing" can be answered from the console.
+        live->report_controllers();
+        // The settings screen's memory card tab works on the same bus and the same cards.
+        live->maple = &maple;
+        live->cards = {card_ptr, card2_ptr};
+        live->report_card = &card_ptr;
+        if (!vmu_dir.empty())
+            live->card_dir = vmu_dir;
+        else if (!vmu.empty() || !vmu2.empty())
+            live->card_dir = std::filesystem::path(vmu.empty() ? vmu2 : vmu).parent_path().string();
+        if (live->card_dir.empty())
+            live->card_dir = ".";
+        if (!ui_assets.empty())
+            live->load_art(ui_assets);
+        live->open_at_start = open_settings;
+        live->open_at_frame = settings_at;
+        if (settings_memory_tab)
+            live->open_tab = dream::render::SettingsMenu::Tab::Memory;
+        std::printf(
+            "F1 (or a pad's select button) opens the settings: controller and memory "
+            "cards\n");
         auto previous_render = std::move(pvr.on_render);
         pvr.on_render = [&live, previous_render](const std::vector<std::uint32_t>& stream) {
             if (previous_render)

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -28,12 +29,14 @@ constexpr SDL_Scancode kScancodes[static_cast<unsigned>(Control::Count)] = {
 // positional names, so the physical button is the same whatever the face labels say. INVALID means
 // the control is keyboard-only: a screenshot is not something to hit by accident mid-race.
 constexpr SDL_GamepadButton kNavButtons[static_cast<unsigned>(Control::Count)] = {
-    SDL_GAMEPAD_BUTTON_DPAD_UP,    SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_LEFT,
-    SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_SOUTH,     SDL_GAMEPAD_BUTTON_EAST,
-    SDL_GAMEPAD_BUTTON_INVALID,    SDL_GAMEPAD_BUTTON_INVALID,   SDL_GAMEPAD_BUTTON_START,
-    SDL_GAMEPAD_BUTTON_INVALID,    SDL_GAMEPAD_BUTTON_INVALID,   SDL_GAMEPAD_BUTTON_INVALID,
-    SDL_GAMEPAD_BUTTON_INVALID,    SDL_GAMEPAD_BUTTON_INVALID,   SDL_GAMEPAD_BUTTON_BACK,
-    SDL_GAMEPAD_BUTTON_EAST,
+    SDL_GAMEPAD_BUTTON_DPAD_UP,        SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+    SDL_GAMEPAD_BUTTON_DPAD_LEFT,      SDL_GAMEPAD_BUTTON_DPAD_RIGHT,
+    SDL_GAMEPAD_BUTTON_SOUTH,          SDL_GAMEPAD_BUTTON_EAST,
+    SDL_GAMEPAD_BUTTON_INVALID,        SDL_GAMEPAD_BUTTON_INVALID,
+    SDL_GAMEPAD_BUTTON_START,          SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,
+    SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, SDL_GAMEPAD_BUTTON_INVALID,
+    SDL_GAMEPAD_BUTTON_INVALID,        SDL_GAMEPAD_BUTTON_INVALID,
+    SDL_GAMEPAD_BUTTON_BACK,           SDL_GAMEPAD_BUTTON_EAST,
 };
 }  // namespace
 
@@ -701,6 +704,42 @@ std::string default_bindings_path() {
     std::string path = std::string(dir) + "bindings.txt";
     SDL_free(dir);
     return path;
+}
+
+void Window::rumble(float strength, std::uint32_t ms) {
+    const float v = std::clamp(strength, 0.0f, 1.0f);
+    const auto level = static_cast<Uint16>(v * 65535.0f);
+    for (SDL_Gamepad* g : pads_)
+        if (g)
+            SDL_RumbleGamepad(g, level, level, ms);  // a pad without motors simply says no
+}
+
+bool load_png(const std::string& path, Image& out, std::string* error) {
+    SDL_Surface* loaded = SDL_LoadPNG(path.c_str());
+    if (!loaded) {
+        if (error)
+            *error = SDL_GetError();
+        return false;
+    }
+    // RGBA32 is R, G, B, A in memory: on a little-endian host, red in the low byte, as the
+    // overlay's frame holds pixels.
+    SDL_Surface* rgba = SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(loaded);
+    if (!rgba) {
+        if (error)
+            *error = SDL_GetError();
+        return false;
+    }
+    out.width = static_cast<unsigned>(rgba->w);
+    out.height = static_cast<unsigned>(rgba->h);
+    out.rgba.assign(static_cast<std::size_t>(out.width) * out.height, 0);
+    const auto* base = static_cast<const std::uint8_t*>(rgba->pixels);
+    for (unsigned y = 0; y < out.height; ++y)
+        std::memcpy(out.rgba.data() + static_cast<std::size_t>(y) * out.width,
+                    base + static_cast<std::size_t>(y) * static_cast<std::size_t>(rgba->pitch),
+                    static_cast<std::size_t>(out.width) * 4);
+    SDL_DestroySurface(rgba);
+    return true;
 }
 
 }  // namespace dream::render::vk

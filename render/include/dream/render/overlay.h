@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace dream::render {
@@ -38,5 +39,9 @@ void fill_rect(std::uint32_t* rgba, unsigned pitch, unsigned width, unsigned hei
 // what is in it. Lower case is folded to upper.
 void draw_text(std::uint32_t* rgba, unsigned pitch, unsigned width, unsigned height, int x, int y,
                std::string_view text, const TextStyle& style = {});
+
+// `text` cut down to fit in `max_px`, ending in ".." when anything was dropped. A pad's name can be
+// longer than the space a row gives it.
+std::string fit_text(std::string_view text, int max_px, unsigned scale);
 
 }  // namespace dream::render

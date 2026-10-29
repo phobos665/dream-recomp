@@ -127,6 +127,13 @@ public:
 // only the caller knows whether the user asked for that.
 enum class CardStatus { Ok, Missing, WrongSize, Unreadable };
 
+// Whether pixel (x, y) of a card's 48x32 screen is dark, from the 192 bytes a title sends, the
+// right way up for a player looking at a pad. The card sits upside down in a pad, so titles send
+// the picture turned through 180 degrees: six bytes a row, the bottom row first, and within a row
+// the last byte holds the leftmost eight pixels, low bit first. Measured on Rush 2049, whose
+// picture only reads "RUSH 2049" this way round.
+bool lcd_pixel(const std::array<std::uint8_t, 192>& lcd, unsigned x, unsigned y) noexcept;
+
 class MemoryCard final : public Device {
 public:
     static constexpr std::size_t kBlocks = 256, kBlockSize = 512;
@@ -156,11 +163,20 @@ public:
 
     bool formatted() const noexcept;
     const std::vector<std::uint8_t>& image() const noexcept { return flash_; }
+    // The file this card saves to; empty for a card that was never given one.
+    const std::string& path() const noexcept { return path_; }
     std::uint64_t block_reads = 0, block_writes = 0, media_info_reads = 0, screen_writes = 0;
+
+    // The card's little screen as the title last drew it: 48x32 pixels, one bit each, 192 bytes in
+    // the order the title sent them. screen_writes says when it changed.
+    static constexpr std::size_t kLcdWidth = 48, kLcdHeight = 32;
+    static constexpr std::size_t kLcdBytes = kLcdWidth * kLcdHeight / 8;
+    const std::array<std::uint8_t, kLcdBytes>& lcd() const noexcept { return lcd_; }
 
 private:
     std::vector<std::uint8_t> flash_ = std::vector<std::uint8_t>(kImageSize, 0);
     std::string path_;
+    std::array<std::uint8_t, kLcdBytes> lcd_{};
 };
 
 class Bus final : public mem::MmioHandler {

@@ -150,4 +150,12 @@ void draw_text(u32* rgba, unsigned pitch, unsigned width, unsigned height, int x
     }
 }
 
+std::string fit_text(std::string_view text, int max_px, unsigned scale) {
+    if (static_cast<int>(text_width(text, scale)) <= max_px)
+        return std::string(text);
+    std::string s(text);
+    while (!s.empty() && static_cast<int>(text_width(s + "..", scale)) > max_px) s.pop_back();
+    return s.empty() ? std::string() : s + "..";
+}
+
 }  // namespace dream::render
