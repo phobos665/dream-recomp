@@ -83,6 +83,15 @@ BIOS boot (r15 = 0x8D000000, GBR = VBR = 0x8C000000, SR 0x400000F1, FPSCR 0x0004
 scratch registers included), writes the vectors and the SYSINFO block, and loads IP.BIN from the
 game area's first 16 sectors to 0x8C008000. The executable itself is placed by the launcher.
 
+The rest of the work area is erased to 0xFF, with one exception (2026-10-29). San Francisco Rush
+2049 checks that it runs on a real BIOS by summing four stretches of the BIOS's GD-ROM code there
+(from 0x8C0010F0, as signed halfwords), twice with different seeds and signs; both totals must come
+to zero. With the erased area the first check failed, and the game answers by re-initialising its
+menu every frame, which clears the pad before the menu reads it: the menu drew but took no input.
+The second check, made at boot, corrupts a saved register when it fails. `balance_bios_sums`
+(`runtime/src/hle/bios.cpp`) writes two of the four stretches so that both checks pass; Flycast's
+reios balances the first check only.
+
 ## Launcher
 
 `runtime/boot/boot_main.cpp` is compiled with each game's emitted units (see

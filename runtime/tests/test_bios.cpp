@@ -245,3 +245,28 @@ TEST_CASE("bios: boot state mirrors the real BIOS hand-over and loads IP.BIN") {
     CHECK_EQ(std::memcmp(sys.memory.ram() + 0x8000, "SEGA SEGAKATANA ", 16), 0);
     CHECK(sys.memory.read8(Bios::kSysInfoBlock + 8) == '0');
 }
+
+TEST_CASE("bios: the work area passes Rush 2049's two BIOS checksums") {
+    System sys;
+    Bios bios(sys);
+    bios.setup_boot(0x8C010000);
+    // The game's own walk (fn_0c072600 and fn_0c0724c8): from 0x8C0010F0, skip then sum signed
+    // halfwords, once with signs -,+,-,+ and once all +; each must end at zero.
+    auto walk = [&](std::uint32_t seed, const int (&sign)[4]) {
+        const std::uint32_t skip[4] = {0, 0x1DA, 0x68C, 0x17EE}, count[4] = {10, 3, 11, 98};
+        std::uint32_t r0 = seed, a = 0x8C0010F0;
+        for (int k = 0; k < 4; ++k) {
+            a += skip[k];
+            for (std::uint32_t i = 0; i < count[k]; ++i, a += 2) {
+                const auto h = static_cast<std::int16_t>(sys.memory.read16(a));
+                r0 += static_cast<std::uint32_t>(sign[k] * static_cast<std::int32_t>(h));
+            }
+        }
+        return r0;
+    };
+    CHECK(walk(0xFFF937D1u, {-1, 1, -1, 1}) == 0u);
+    CHECK(walk(0xFFF987F9u, {1, 1, 1, 1}) == 0u);
+    // Still the erased work area around them, and the GD2 entry untouched.
+    CHECK(sys.memory.read16(Bios::kHookGd2) == 0xFFFFu);
+    CHECK(sys.memory.read16(0x8C003238) == 0xFFFFu);
+}

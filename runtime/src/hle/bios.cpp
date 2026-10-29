@@ -87,6 +87,47 @@ enum : std::uint32_t {
 };
 enum : std::uint32_t { DRV_BUSY = 0, DRV_PAUSE = 1, DRV_STANDBY = 2, DRV_PLAY = 3, DRV_NODISC = 7 };
 
+// San Francisco Rush 2049 checks that it runs on a real BIOS. It sums four stretches of the
+// BIOS's GD-ROM code (in the copy the boot ROM leaves in the work area) as signed halfwords, twice
+// with different seeds and signs, and both totals must come to zero:
+//   0xFFF937D1 - A + B - C + D   (fn_0c072600: if not, the menu re-initialises every frame and
+//                                 clears the pad each time, so it never reacts to any input)
+//   0xFFF987F9 + A + B + C + D   (fn_0c0724c8: if not, it XORs a register its caller saved)
+// The erased work area holds no BIOS code, so C and D are given values that satisfy both. From the
+// two equations, A + C = (seed1 - seed2) / 2 and B + D = -(seed1 + seed2) / 2. Flycast's reios
+// fills D to balance the first sum only.
+struct BiosSumRun {
+    std::uint32_t offset, halfwords;  // offset from the start of RAM
+};
+constexpr BiosSumRun kSumA{0x10F0, 10}, kSumB{0x12DE, 3}, kSumC{0x1970, 11}, kSumD{0x3174, 98};
+constexpr std::int32_t kSumSeed1 = static_cast<std::int32_t>(0xFFF937D1u);
+constexpr std::int32_t kSumSeed2 = static_cast<std::int32_t>(0xFFF987F9u);
+
+std::int32_t sum_run(const std::uint8_t* ram, BiosSumRun r) {
+    std::int32_t sum = 0;
+    for (std::uint32_t i = 0; i < r.halfwords; ++i) {
+        const std::uint8_t* p = ram + r.offset + 2 * i;
+        sum += static_cast<std::int16_t>(static_cast<std::uint16_t>(p[0] | (p[1] << 8)));
+    }
+    return sum;
+}
+
+// Writes halfwords that add up to `total`: as many at the int16 limit as it takes, then zeros.
+void fill_run(std::uint8_t* ram, BiosSumRun r, std::int32_t total) {
+    for (std::uint32_t i = 0; i < r.halfwords; ++i) {
+        const std::int32_t v = std::clamp<std::int32_t>(total, -32768, 32767);
+        total -= v;
+        std::uint8_t* p = ram + r.offset + 2 * i;
+        p[0] = static_cast<std::uint8_t>(v & 0xFF);
+        p[1] = static_cast<std::uint8_t>((v >> 8) & 0xFF);
+    }
+}
+
+void balance_bios_sums(std::uint8_t* ram) {
+    fill_run(ram, kSumC, (kSumSeed1 - kSumSeed2) / 2 - sum_run(ram, kSumA));
+    fill_run(ram, kSumD, -(kSumSeed1 + kSumSeed2) / 2 - sum_run(ram, kSumB));
+}
+
 }  // namespace
 
 Bios::Bios(System& sys) : sys_(sys), flash_(sys.memory.flash()) {
@@ -124,6 +165,7 @@ void Bios::setup_boot(std::uint32_t boot_addr) {
     // vectors, then the SYSINFO block.
     std::memset(m.ram(), 0xFF, 0x10000);
     install();
+    balance_bios_sums(m.ram());
     sh4::Ctx fresh{};
     c = fresh;
     c.r[0] = 0xAC0005D8;
