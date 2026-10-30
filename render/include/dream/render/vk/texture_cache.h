@@ -40,12 +40,17 @@ public:
     // the palette registers far more often than it changes what is in them, and dropping the cache
     // every frame would decode every texture every frame. Returns true when it invalidated.
     bool set_palette(const std::uint32_t* palette_ram, PaletteFormat format);
+    // The width in texels of a stride texture, from TEXT_CONTROL ((reg & 31) * 32). A stride
+    // texture's TSP size is only the power of two that contains it; read at that width, a 320-wide
+    // Sofdec frame in a 512 texture comes out repeated across the screen and squashed into the top.
+    void set_stride_width(std::uint32_t texels) noexcept { stride_width_ = texels; }
     // Drops the textures whose pixels lie in [begin, end) of video memory. This is what makes a
     // render to texture work: the frame the renderer just wrote back into video memory has to
     // replace whatever the cache decoded from those bytes before. It is also the test that tells a
     // render to texture apart from ordinary double buffering, because a double-buffered title
-    // never samples the buffer it just wrote. Returns the number dropped.
-    std::size_t invalidate_range(std::uint32_t begin, std::uint32_t end);
+    // never samples the buffer it just wrote. Returns the number dropped. `by_render` false is for
+    // other writers (the YUV converter, the texture path), which are not counted in `overwritten`.
+    std::size_t invalidate_range(std::uint32_t begin, std::uint32_t end, bool by_render = true);
 
     // The descriptor set for a polygon's texture, or VK_NULL_HANDLE when it cannot be decoded.
     // `cmd` is a command buffer outside a render pass, used for the upload.
@@ -101,6 +106,7 @@ private:
     const std::uint8_t* vram_ = nullptr;
     std::size_t vram_size_ = 0;
     std::uint32_t palette_[1024]{};
+    std::uint32_t stride_width_ = 0;
     std::string error_;
 };
 

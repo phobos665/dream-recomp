@@ -159,7 +159,8 @@ int main(int argc, char** argv) {
                             p.tcw);
                 for (std::uint32_t i = 0; i < p.count; ++i) {
                     const dream::render::Vertex& v = frame.vertices[p.first + i];
-                    std::printf(" (%.1f %.1f %.4f %08x %08x)", v.x, v.y, v.z, v.base, v.offset);
+                    std::printf(" (%.1f %.1f %.4f %08x %08x %.4f %.4f)", v.x, v.y, v.z, v.base,
+                                v.offset, v.u, v.v);
                 }
                 std::printf("\n");
             }

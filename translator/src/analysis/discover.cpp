@@ -162,6 +162,17 @@ private:
         while (!work.empty()) {
             std::uint32_t pc = work.back();
             work.pop_back();
+            // A branch into a delay slot runs that one instruction as an ordinary one and carries
+            // on after the branch pair, a path nothing else reaches. The slot was marked visited
+            // with its branch, so without this the walk stopped there and the function ended at
+            // the slot: Daytona USA 2001's 0x0c0244e0 branches with `bt.s` into the slot of its
+            // `jmp @r0` to reach the rest of its body, and the cut-off body left four pushed
+            // registers on the stack.
+            if (slots.count(pc) && !visited.count(pc + 2)) {
+                work.push_back(pc + 2);
+                block_starts.insert(pc + 2);
+                continue;
+            }
             const std::uint32_t block_start = pc;
             while (in_image(pc) && !visited.count(pc)) {
                 if (pc - entry > opt_.max_function_bytes)

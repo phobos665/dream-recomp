@@ -6,6 +6,7 @@
 
 #include "dream/runtime/fenv.h"
 #include "dream/runtime/memory.h"
+#include "dream/runtime/sh4/abi.h"
 #include "dream/runtime/sh4/ctx.h"
 #include "dream/runtime/sh4/ops.h"
 
@@ -231,4 +232,65 @@ TEST_CASE("p13_slotcase: a switch case in the slot of a bt/s runs the slot once"
         dream::gen::slotcase(c, m);
         CHECK_MESSAGE(c.r[0] == k.result, "case " << k.index << " flag " << k.flag);
     }
+}
+
+// A branch into another branch's delay slot runs the slot and carries on after the pair. Here the
+// function's range ends right after the slot, so the code that follows is another function: the
+// slot copy has to tail-call it. It used to fall off the end and return, with the rest of the body
+// unrun, which in Daytona USA 2001 left four pushed registers on the stack.
+TEST_CASE("p14_slotjoin: entering a jmp's slot carries on after the pair") {
+    dream::BareMemory m;
+    load_image(m, "p14_slotjoin.bin", 0x8C040000);
+    {
+        Ctx c = fresh();
+        c.r[4] = 0;  // bt/s taken: into the slot, then on to _slotjoin_tail
+        c.r[5] = 10;
+        dream::gen::slotjoin(c, m);
+        CHECK(c.r[5] == 13u);   // both slots ran
+        CHECK(c.r[0] == 113u);  // _slotjoin_tail: r5 + 100
+    }
+    {
+        Ctx c = fresh();
+        c.r[4] = 0x8C040012;  // not taken: the jmp goes to _slotjoin_other
+        c.r[5] = 10;
+        dream::gen::slotjoin(c, m);
+        CHECK(c.r[5] == 13u);
+        CHECK(c.r[0] == 7u);
+    }
+}
+
+// A resume entry polls for interrupts before it dispatches, and an interrupt taken there has to
+// see the pc being resumed: a handler that switches tasks saves that pc as the task's SPC, and the
+// task carries on from it when it is switched back. Recording the function's entry instead sent
+// Rush 2049's main loop back to its first instruction with the registers of its end. Not an oracle
+// case: a poll point is the recompiler's own construct, and the hardware has nothing to compare.
+TEST_CASE("p10_longjmp: an interrupt taken on a resume entry sees the resumed pc") {
+    struct Stop {};
+    struct Probe final : dream::sh4::Hooks {
+        std::uint32_t pc = 0;
+        void on_poll(Ctx& c, dream::Memory&) override {
+            pc = c.pc;
+            throw Stop{};  // the poll is all this test is about
+        }
+        void on_trapa(Ctx&, dream::Memory&, std::uint32_t) override {}
+        void on_rte(Ctx&, dream::Memory&) override {}
+        void on_untranslated(Ctx&, dream::Memory&, std::uint32_t) override {}
+    } probe;
+    struct Install {
+        dream::sh4::Hooks* before = dream::sh4::hooks();
+        explicit Install(dream::sh4::Hooks* h) { dream::sh4::set_hooks(h); }
+        ~Install() { dream::sh4::set_hooks(before); }
+    };
+
+    dream::BareMemory m;
+    load_image(m, "p10_longjmp.bin", 0x8C030000);
+    Ctx c = fresh();
+    c.cycles = 0;
+    c.next_event = 0;  // an interrupt is due at the first poll
+    {
+        Install install(&probe);
+        // Where _restore's rts lands: _main, right after its `bsr _save`.
+        CHECK_THROWS_AS(dream::sh4::resume_at(c, m, 0x8C03000A), Stop);
+    }
+    CHECK(probe.pc == 0x8C03000Au);  // not _main's entry, 0x8C030000
 }

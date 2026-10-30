@@ -77,6 +77,18 @@ void Sink::push(std::int16_t left, std::int16_t right) {
 void Sink::flush() {
     if (!stream_ || block_.empty())
         return;
+    // The guest is paced against the wall clock, so the queue holds about what was put in ahead of
+    // the device, and with nothing put in ahead one slow frame empties it: Daytona USA 2001 ran
+    // dry 26 times in a 95-second race. Silence first, at the start and after every gap, keeps a
+    // cushion that a slow frame eats into instead of cutting the sound.
+    const bool dry = queued_samples() == 0;
+    if (blocks > 0 && dry)
+        ++starved;
+    if (dry) {
+        const std::vector<std::int16_t> silence(kCushionFrames * 2, 0);
+        SDL_PutAudioStreamData(stream_, silence.data(),
+                               static_cast<int>(silence.size() * sizeof(std::int16_t)));
+    }
     SDL_PutAudioStreamData(stream_, block_.data(),
                            static_cast<int>(block_.size() * sizeof(std::int16_t)));
     ++blocks;

@@ -59,10 +59,9 @@ Three things had to be right before a title would talk to one:
   and every request is refused with no other symptom: the card simply looks absent.
 
 Titles also draw on the card's little screen; Crazy Taxi sends it an image every few frames. The
-screen is not modelled, but those writes are accepted so the title does not decide the device is
-broken. **Idea for later (owner, 2026-09-12): a hotkey that renders the VMU screen**, which would
-make that traffic visible and is a small, self-contained feature once there is a window to draw it
-in.
+card keeps the last picture it was sent (`MemoryCard::lcd()`), the settings screen's memory card tab
+shows it, and the run report prints it (2026-10-29), which settles the **idea for later (owner,
+2026-09-12): a hotkey that renders the VMU screen**.
 
 With the owner's Crazy Taxi save (Flycast writes one per title as
 `<product-id>_vmu_save_A1.bin`, and Crazy Taxi's product code MK-51035 is in its own IP.BIN) the
@@ -70,7 +69,7 @@ title reads the file and says so on screen: "File loaded from the VMU".
 
 ## The card's screen, and what arrives on the wire
 
-The screen is still not modelled, but the format is no longer guesswork. KallistiOS is BSD-licensed
+The format of what a title sends the screen is no longer guesswork. KallistiOS is BSD-licensed
 and is the reference the hard rules point at, so a checkout at `/kallistios/` (gitignored, clone it
 with `git clone --depth 1 https://github.com/KallistiOS/KallistiOS.git kallistios`) settles what the
 frame looks like without going anywhere near Sega's SDK.
@@ -93,6 +92,11 @@ KallistiOS ships `vmu_draw_lcd` and `vmu_draw_lcd_rotated` side by side because 
 controller is upside down relative to one held on its own, so both orientations occur in the wild.
 Take bit zero as top-left and expect to flip it once, after looking at a real frame from a title
 that draws text; nothing else about the layout is in doubt.
+
+Settled on Rush 2049 (2026-10-29), which writes "RUSH 2049" on the card: the text reads only with
+the frame turned through 180 degrees, as a card seated upside down in a pad needs. Six bytes a row
+with the bottom row first, the last byte of a row holding the leftmost eight pixels, low bit first;
+`maple::lcd_pixel` decodes it that way.
 
 Measured on Crazy Taxi: 917 screen writes in a 150-second run with a card attached. The title drives
 the screen roughly four times harder when no card is present, which is consistent with an animated

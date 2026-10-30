@@ -219,9 +219,12 @@ public:
                     addr += *r0;
                 }
                 addr = normalise(addr);
-                for (std::uint32_t w = addr & ~3u; w < addr + size; w += 4)
-                    if (img_.contains(w, 4))
-                        out.insert(w);
+                // Bounds in 64 bits: a store just below 4 GB (data decoded as code can write to
+                // 0xFFFFFFFE) wrapped w past zero before it reached addr + size, forever.
+                const std::uint64_t end = std::uint64_t{addr} + size;
+                for (std::uint64_t w = addr & ~3u; w < end; w += 4)
+                    if (img_.contains(static_cast<std::uint32_t>(w), 4))
+                        out.insert(static_cast<std::uint32_t>(w));
             }
         }
     }
@@ -246,10 +249,12 @@ public:
         out << "static void " << name << "__resume(Ctx& c, Memory& m, std::uint32_t resume_pc) {\n";
         out << "    [[maybe_unused]] const std::uint32_t entry_pr = c.pr;\n";
         // Poll points record the exact guest pc first: an interrupt handler that switches tasks
-        // returns through RTE to SPC, and run_guest re-enters this function there.
+        // returns through RTE to SPC, and run_guest re-enters this function there. On a resume
+        // that pc is resume_pc, not the entry: recording the entry restarts the function with the
+        // registers of its end once the task is switched back (Rush 2049, VMU task).
         if (opt_.irq_checks)
-            out << "    if (c.cycles >= c.next_event) { c.pc = " << hexu(spec_.entry)
-                << "; deliver_irq(c, m); }\n";
+            out << "    if (c.cycles >= c.next_event) { c.pc = resume_pc ? resume_pc : "
+                << hexu(spec_.entry) << "; deliver_irq(c, m); }\n";
         out << "    if (resume_pc) {\n        switch (resume_pc) {\n";
         for (std::uint32_t b : blocks_)
             out << "            case " << hexu(b) << ": goto " << label(b) << ";\n";
@@ -1050,6 +1055,14 @@ private:
             out << label(pc + 2) << ":\n";
             out << "    " << slot_code << "\n";
             out << label(pc) << "_skip:;\n";
+            // Both paths carry on at pc+4. Said explicitly, because the block emitted next is not
+            // necessarily that one, and when pc+4 lies outside this function there is no block at
+            // all: falling off the end returned to the caller with the rest of the body unrun.
+            if (blocks_.count(pc + 4))
+                out << "    goto " << label(pc + 4) << ";\n";
+            else if (!in_range(pc + 4))
+                out << "    c.pc = " << hexu(pc + 4) << "; " << call_target_expr(pc + 4)
+                    << " return;\n";
         }
         if (call_returns_.count(pc + 4) && !blocks_.count(pc + 4))
             out << label(pc + 4) << ":;\n";  // resume point after the call

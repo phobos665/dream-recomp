@@ -48,14 +48,28 @@ public:
     // Navigation. `devices` is how many device rows exist, so the device selector can wrap.
     void move(int delta);
     void adjust(int delta, unsigned device_count);  // left/right on the current row
-    Action activate();                              // return/A on the current row
-    void back();                                    // escape/B
+    // Return/A on the current row. On the device row it steps to the next of `device_count`.
+    Action activate(unsigned device_count = 1);
+    // The cursor is on one of the rows above the bindings, which left and right change.
+    bool on_setting_row() const noexcept { return row_ < kFirstBinding; }
+    bool on_device_row() const noexcept { return row_ == kDeviceRow; }
+    void back();  // escape/B
 
     // The result of a capture the caller ran on our behalf.
     void apply_capture(const Binding& b, bool cancelled);
 
     void draw(std::uint32_t* rgba, unsigned pitch, unsigned width, unsigned height,
               const std::vector<std::string>& devices) const;
+
+    // The rows alone, from `top` down between `left` and `right`, for a screen that lays out its
+    // own card around them (the settings screen puts a picture of the pad beside them). Returns
+    // the y below the last row.
+    int draw_rows(std::uint32_t* rgba, unsigned pitch, unsigned width, unsigned height, int left,
+                  int top, int right, unsigned scale,
+                  const std::vector<std::string>& devices) const;
+
+    // The control the cursor is on, when it is on a binding row: what a picture should point at.
+    bool selected_control(PadControl& out) const { return on_binding(row_, out); }
 
 private:
     // Rows above the bindings, then one row per control, then the rows below.

@@ -115,6 +115,13 @@ void MemoryCard::format() {
     // The directory (241..253) and the user area (0..199) stay zero: an empty card.
 }
 
+bool lcd_pixel(const std::array<std::uint8_t, 192>& lcd, unsigned x, unsigned y) noexcept {
+    if (x >= MemoryCard::kLcdWidth || y >= MemoryCard::kLcdHeight)
+        return false;
+    const std::uint8_t b = lcd[(MemoryCard::kLcdHeight - 1 - y) * 6 + 5 - x / 8];
+    return ((b >> (x % 8)) & 1u) != 0;
+}
+
 // A formatted card has its system area in the last block, starting with a run of 0x55.
 bool MemoryCard::formatted() const noexcept {
     const std::uint8_t* root = flash_.data() + 0xFF * kBlockSize;
@@ -201,10 +208,12 @@ Reply MemoryCard::handle(std::uint8_t command, const std::uint32_t* args, std::s
             if (nwords < 2)
                 return kFileError;
             // Titles also draw on the card's little screen; Crazy Taxi sends it an icon every few
-            // frames. The screen is not modelled, but the write is accepted so the title does not
-            // decide the device is broken.
+            // frames. The picture is kept as sent, for a viewer to show; the card itself does
+            // nothing else with it.
             if (args[0] == kLcd) {
                 ++screen_writes;
+                if (nwords >= 2 + kLcdBytes / 4)
+                    std::memcpy(lcd_.data(), args + 2, kLcdBytes);
                 return kDeviceReply;
             }
             if (args[0] != kStorage)

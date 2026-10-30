@@ -54,11 +54,17 @@ void InputMenu::adjust(int delta, unsigned device_count) {
     }
 }
 
-InputMenu::Action InputMenu::activate() {
+InputMenu::Action InputMenu::activate(unsigned device_count) {
     if (awaiting_)
         return Action::None;
     if (row_ == close_row())
         return Action::Close;
+    // Return on the device row steps to the next device, as right would: the row is a choice, and
+    // a player who presses the confirm button on a choice expects it to change.
+    if (row_ == kDeviceRow) {
+        adjust(1, device_count);
+        return Action::None;
+    }
     if (row_ == reset_row()) {
         // Only this device's set, so resetting the keyboard cannot silently discard a pad layout
         // somebody spent longer on.
@@ -139,7 +145,20 @@ void InputMenu::draw(u32* rgba, unsigned pitch, unsigned width, unsigned height,
 
     const int left = cx + pad;
     const int right = cx + card_w - pad;
-    int y = cy + banner_h + pad;
+    draw_rows(rgba, pitch, width, height, left, cy + banner_h + pad, right, s, devices);
+
+    // The footer says how to work the screen, because the screen is the only place that says it.
+    const TextStyle hint{kUiGrey, 0, s};
+    const char* help = awaiting_ ? "PRESS AN INPUT TO BIND IT, OR ESCAPE TO CANCEL"
+                                 : "ARROWS MOVE, RETURN BINDS, ESCAPE CLOSES";
+    draw_text(rgba, pitch, width, height, left, cy + card_h - line, help, hint);
+}
+
+int InputMenu::draw_rows(u32* rgba, unsigned pitch, unsigned width, unsigned height, int left,
+                         int top, int right, unsigned s,
+                         const std::vector<std::string>& devices) const {
+    const int line = static_cast<int>(text_height(s)) + static_cast<int>(s);
+    int y = top;
 
     // One row. The selected row is a full-width orange bar with white type, which is the only
     // strong colour on the card and so reads as the cursor at a glance.
@@ -152,15 +171,27 @@ void InputMenu::draw(u32* rgba, unsigned pitch, unsigned width, unsigned height,
         const TextStyle t{sel ? kUiWhite : kUiInk, 0, s};
         draw_text(rgba, pitch, width, height, left, y, name, t);
         if (!value.empty()) {
-            const int vx = right - static_cast<int>(text_width(value, s));
-            draw_text(rgba, pitch, width, height, vx, y, value, t);
+            // Whatever room the name leaves, less a gap; a long pad name is shortened, not
+            // drawn over its label.
+            const int room = right - left - static_cast<int>(text_width(name, s)) -
+                             static_cast<int>(kCellWidth * s);
+            const std::string shown = fit_text(value, room, s);
+            const int vx = right - static_cast<int>(text_width(shown, s));
+            draw_text(rgba, pitch, width, height, vx, y, shown, t);
         }
         y += line;
     };
 
-    const std::string device_name =
-        device_ < devices.size() ? devices[device_] : std::string("KEYBOARD");
-    row(kDeviceRow, "DEVICE", "< " + device_name + " >");
+    std::string device_name = device_ < devices.size() ? devices[device_] : std::string("KEYBOARD");
+    // The arrows are what say the row cycles, so they survive shortening.
+    const int arrows = static_cast<int>(text_width("< > ", s));
+    device_name = fit_text(device_name,
+                           right - left - static_cast<int>(text_width("EDITING ", s)) - arrows -
+                               static_cast<int>(kCellWidth * s),
+                           s);
+    // "Editing", not "device": every device drives the game at once, and this row only picks
+    // whose layout the rows below show.
+    row(kDeviceRow, "EDITING", "< " + device_name + " >");
     row(kDeadzoneRow, "DEAD ZONE", "< " + std::to_string(bindings_.deadzone_percent) + "% >");
     row(kRampRow, "TRIGGER RAMP", bindings_.trigger_ramp ? "< ON >" : "< OFF >");
 
@@ -178,12 +209,7 @@ void InputMenu::draw(u32* rgba, unsigned pitch, unsigned width, unsigned height,
     y += static_cast<int>(s) * 2;
     row(reset_row(), "RESET THIS DEVICE", "");
     row(close_row(), "CLOSE", "");
-
-    // The footer says how to work the screen, because the screen is the only place that says it.
-    const TextStyle hint{kUiGrey, 0, s};
-    const char* help = awaiting_ ? "PRESS AN INPUT TO BIND IT, OR ESCAPE TO CANCEL"
-                                 : "ARROWS MOVE, RETURN BINDS, ESCAPE CLOSES";
-    draw_text(rgba, pitch, width, height, left, cy + card_h - line, help, hint);
+    return y;
 }
 
 }  // namespace dream::render

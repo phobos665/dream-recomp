@@ -37,8 +37,18 @@ public:
     bool create(Context& ctx, std::uint32_t width, std::uint32_t height);
     void destroy();
 
-    // The render pass the renderer's pipelines are built against. Valid after create().
+    // Translucent polygons sorted per pixel, as the hardware does (see Renderer). Read by
+    // create(): clear it first to keep the per-strip sort. A device without fragment-shader stores
+    // and atomics keeps the per-strip sort either way.
+    bool sort_per_pixel = true;
+
+    // The render pass the renderer's pipelines are built against. Valid after create(). With
+    // per-pixel sorting it has three subpasses (see Renderer::draw); otherwise one.
     VkRenderPass render_pass() const noexcept { return render_pass_; }
+    // What the renderer needs to sort per pixel, or a null set when this target does not.
+    OitTargets oit_targets() const noexcept {
+        return oit_ ? OitTargets{colour_.view(), depth_.view(), extent_} : OitTargets{};
+    }
     VkExtent2D extent() const noexcept { return extent_; }
     std::uint32_t width() const noexcept { return extent_.width; }
     std::uint32_t height() const noexcept { return extent_.height; }
@@ -63,6 +73,7 @@ private:
     VkCommandBuffer cmd_ = VK_NULL_HANDLE;
     VkFence fence_ = VK_NULL_HANDLE;
     HostBuffer readback_;
+    bool oit_ = false;
     bool have_pixels_ = false;
     std::string error_;
 };

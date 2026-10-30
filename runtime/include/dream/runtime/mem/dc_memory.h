@@ -134,6 +134,10 @@ public:
     // the guest address and value (the launcher's DREAM_WATCH_WRITE).
     std::uint32_t watch_lo = 1, watch_hi = 0;
     std::function<void(std::uint32_t addr, std::uint32_t value, unsigned size)> on_watch_write;
+    // The same for loads from RAM (the launcher's DREAM_WATCH_READ): who reads a variable says
+    // which code depends on it, which a write watch cannot.
+    std::uint32_t rwatch_lo = 1, rwatch_hi = 0;
+    std::function<void(std::uint32_t addr, std::uint32_t value, unsigned size)> on_watch_read;
 
     // Development aid: a rolling hash of every guest store. Two runs of the same program that
     // agree on this did the same thing, whether one was translated and the other interpreted, so

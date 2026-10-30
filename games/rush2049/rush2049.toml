@@ -1,0 +1,25 @@
+# San Francisco Rush 2049 (Europe), T-9709D-50, v1.002. Per-game configuration for dream-translate
+# (docs/game-config.md). Written by `dcdisc new-game`; everything here is read off the disc or is
+# the standard Katana layout, and nothing from the disc itself is ever committed.
+
+[game]
+id = "rush2049"
+title = "San Francisco Rush 2049"
+region = "Europe"
+product = "T-9709D-50"
+
+[disc]
+image = "disc/rush2049.gdi"   # the owner's dump, gitignored (games/*/disc/); mounted by the launcher
+# SHA-1 of the plain 1ST_READ.BIN this config was measured against.
+sha1_1st_read = "417c2aaefc934b013a00fc19a782f2977234946c"
+
+[binary]
+path = "extracted/fs/1ST_READ.BIN"   # written by `dcdisc extract`, gitignored
+load_address = 0x8C010000            # where the console's BIOS loads the file
+link_address = 0x0C010000            # the same RAM through a different address; what the code assumes
+entry = 0x8C010000                   # the first instruction
+
+# Addresses discovery does not reach, and regions the program copies and runs elsewhere, both go
+# here. Run the launcher with --suggest-config FILE and it writes them for you.
+# [functions]
+# extra = []

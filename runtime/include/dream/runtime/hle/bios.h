@@ -29,10 +29,14 @@ public:
     static constexpr std::uint32_t kVecSystem = 0x8C0000B0, kVecFont = 0x8C0000B4,
                                    kVecFlash = 0x8C0000B8, kVecGd = 0x8C0000BC,
                                    kVecGd2 = 0x8C0000C0, kVecMisc = 0x8C0000E0;
-    // Where the vectors point; native handlers are registered at these guest addresses.
+    // Where the vectors point; native handlers are registered at these guest addresses. The GD2
+    // entry is where the real BIOS has it, because titles call it there directly rather than
+    // through its vector: Rush 2049 does from its menus, and with the work area erased to 0xFF
+    // anything else is an 0xFFFF instruction (Flycast's reios hooks the same address for the same
+    // reason).
     static constexpr std::uint32_t kHookSystem = 0x8C001000, kHookFont = 0x8C001002,
                                    kHookFlash = 0x8C001004, kHookGd = 0x8C001006,
-                                   kHookMisc = 0x8C001008, kHookGd2 = 0x8C00100A;
+                                   kHookMisc = 0x8C001008, kHookGd2 = 0x8C0010F0;
     static constexpr std::uint32_t kSysInfoBlock = 0x8C000068;
 
     explicit Bios(System& sys);

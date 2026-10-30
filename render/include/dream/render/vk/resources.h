@@ -63,6 +63,29 @@ private:
     VkDeviceSize capacity_ = 0;
 };
 
+// A device-local buffer that only the GPU reads and writes: the per-pixel lists of translucent
+// fragments, filled and consumed within one frame. Host-visible memory would work, but every
+// fragment of every translucent polygon is written to it.
+class DeviceBuffer {
+public:
+    DeviceBuffer() = default;
+    ~DeviceBuffer();
+    DeviceBuffer(const DeviceBuffer&) = delete;
+    DeviceBuffer& operator=(const DeviceBuffer&) = delete;
+
+    bool create(const Context& ctx, VkDeviceSize bytes, VkBufferUsageFlags usage);
+    void destroy();
+
+    VkBuffer handle() const noexcept { return buffer_; }
+    VkDeviceSize size() const noexcept { return size_; }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkBuffer buffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory memory_ = VK_NULL_HANDLE;
+    VkDeviceSize size_ = 0;
+};
+
 // A device-local image used as an attachment (the depth buffer).
 class AttachmentImage {
 public:

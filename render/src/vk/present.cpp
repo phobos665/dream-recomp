@@ -177,6 +177,10 @@ void Presenter::destroy_image() {
     if (!ctx_ || !ctx_->device())
         return;
     VkDevice dev = ctx_->device();
+    // A frame still in flight may sample this image (the guest changing its framebuffer size, for
+    // example 640x480 to 640x470). Metal keeps it alive; other drivers lose the device.
+    if (image_)
+        vkDeviceWaitIdle(dev);
     if (view_)
         vkDestroyImageView(dev, view_, nullptr);
     if (image_)

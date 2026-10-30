@@ -113,7 +113,8 @@ std::uint32_t twiddle_index(std::uint32_t x, std::uint32_t y, std::uint32_t widt
 }
 
 std::uint32_t TextureInfo::size_bytes() const noexcept {
-    u32 texels = width * height;
+    // A stride texture occupies its stride per row, not its addressed width.
+    u32 texels = ((!twiddled && pitch != 0) ? pitch : width) * height;
     // A mipmapped texture is followed by its whole chain, each level a quarter of the last, which
     // converges on a third more texels, plus up to three texels of padding. Rounded up: this
     // bounds an invalidation range, and guessing low there means a stale texture, which is the
@@ -162,8 +163,11 @@ bool describe_texture(std::uint32_t tcw, std::uint32_t tsp, std::uint32_t stride
     // otherwise, and a stride texture is always in scan order.
     const bool can_be_linear = !out.vq && !out.indexed();
     out.twiddled = !(can_be_linear && (tcw_scan_order(tcw) != 0 || out.stride));
-    if (out.stride && stride_width != 0)
-        out.width = stride_width;
+    // The stride sets how far apart rows are in memory, not the texture's size: polygons address
+    // it as the TSP power of two, of which only the first `stride` texels a row are image. Taking
+    // the stride as the width stretched a 320-wide Sofdec frame across a 512-wide mapping.
+    if (out.stride && stride_width != 0 && !out.twiddled)
+        out.pitch = stride_width;
 
     if (out.format == PixelFormat::Palette4)
         out.palette_base = tcw_palette_select(tcw) << 4;
@@ -255,6 +259,8 @@ u32 unpack_16(PixelFormat format, u16 p) {
 bool decode_texture(const TextureInfo& info, const std::uint8_t* vram, std::size_t vram_size,
                     const std::uint32_t* palette, std::vector<std::uint32_t>& out) {
     const u32 w = info.width, h = info.height;
+    // Row length in memory: the stride for a stride texture, the width otherwise.
+    const u32 pitch = (!info.twiddled && info.pitch != 0) ? info.pitch : w;
     out.assign(static_cast<std::size_t>(w) * h, 0);
     if (info.format == PixelFormat::Reserved)
         return false;
@@ -319,14 +325,16 @@ bool decode_texture(const TextureInfo& info, const std::uint8_t* vram, std::size
             return true;
         }
         case PixelFormat::Yuv422: {
-            if (!in_range(base, w * h * 2))
+            if (!in_range(base, pitch * h * 2))
                 return false;
             // Two texels per four bytes. Twiddled YUV is stored as pairs, so the pair index is
             // twiddled over half the width.
             for (u32 y = 0; y < h; ++y)
                 for (u32 x = 0; x < w; x += 2) {
+                    if (!info.twiddled && x >= pitch)
+                        break;  // past the stride: not part of the image, left clear
                     const u32 pair =
-                        info.twiddled ? twiddle_index(x / 2, y, w / 2, h) : (y * w + x) / 2;
+                        info.twiddled ? twiddle_index(x / 2, y, w / 2, h) : (y * pitch + x) / 2;
                     const u8* p = vram + base + static_cast<std::size_t>(pair) * 4;
                     const s32 u = p[0], y0 = p[1], v = p[2], y1 = p[3];
                     out[static_cast<std::size_t>(y) * w + x] = yuv_to_rgba(y0, u, v);
@@ -339,11 +347,13 @@ bool decode_texture(const TextureInfo& info, const std::uint8_t* vram, std::size
         case PixelFormat::Rgb565:
         case PixelFormat::Argb4444:
         case PixelFormat::BumpMap: {
-            if (!in_range(base, w * h * 2))
+            if (!in_range(base, pitch * h * 2))
                 return false;
             for (u32 y = 0; y < h; ++y)
                 for (u32 x = 0; x < w; ++x) {
-                    const u32 index = info.twiddled ? twiddle_index(x, y, w, h) : y * w + x;
+                    if (!info.twiddled && x >= pitch)
+                        break;  // past the stride: not part of the image, left clear
+                    const u32 index = info.twiddled ? twiddle_index(x, y, w, h) : y * pitch + x;
                     out[static_cast<std::size_t>(y) * w + x] = unpack_16(
                         info.format, read16(vram + base + static_cast<std::size_t>(index) * 2));
                 }

@@ -196,12 +196,25 @@ word does not fail a build, it draws**, and it draws something plausible enough 
 something else; the test sets each field alone with every other bit set, so a reader that is off by
 one picks up a neighbour and the failure names the field.
 
-Translucent strips are sorted back to front by their nearest vertex. **This is the fallback, not
-what the hardware does.** A real PowerVR sorts per pixel, so two translucent surfaces that
-intersect come out right and a per-strip sort cannot. Per-pixel sorting needs fragment stores and
-atomics, which the development machine has (`dream_render_probe` reports them), and is the quality
-refinement to make once a title shows the difference; a per-strip sort is what most Dreamcast
-rendering used for years and is right for everything but intersecting transparency.
+**Translucent polygons are sorted per pixel** (2026-10-29), as the hardware does in its auto-sort
+mode (`ISP_FEED_CFG` bit 0 clear, and no tile asking for pre-sort in a type-2 region array), when
+the device has fragment stores and atomics. `Offscreen` then builds a render pass with three
+subpasses: 0 draws the opaque and punch-through lists; 1 draws the translucent list with
+`geometry.frag` built as `DREAM_OIT_APPEND`, which tests each fragment against the opaque depth
+(read as an input attachment, with the polygon's own compare mode) and adds the ones that pass to
+their pixel's list, a linked list in a storage buffer headed by an `r32ui` image; 2 runs
+`resolve.frag` over the target, which sorts each pixel's list farthest first, keeping the sending
+order for fragments at the same depth, and blends it onto the colour with each polygon's own
+factors. That is Flycast's approach (its Vulkan OIT renderer). Room is kept for eight fragments a
+pixel on average (64 MB at most); a pixel keeps its 32 nearest.
+
+Daytona USA 2001 showed why a per-strip sort is not enough. Its fence carries a vertex behind the
+camera, clamped to 1/w = 500, so keyed on the nearest vertex it sorted after the HUD's sprites at
+400 and was blended over the speedometer and the map; keyed on the farthest vertex, as Flycast's
+`sortPolyParams` does, the HUD came back but the car's decals, sent after the body they sit on at
+almost the same depth, went under it. Per pixel, both are right. On an RX 7800 XT the extra subpasses
+cost nothing measurable. Without fragment stores and atomics, or with `DREAM_NO_OIT=1` set for the
+launcher, translucent strips are still sorted back to front per strip, by their farthest vertex.
 
 **Modifier volumes are decoded but not drawn.** They need a stencil pass, and no captured Crazy
 Taxi frame so far contains one, so the code would be unverifiable. It is listed in "Not done"
@@ -366,6 +379,14 @@ ARGB1555 gets its alpha bit from the threshold in `FB_W_CTRL`. The frames share 
 so the window keeps the last frame until the next one is drawn. Rez renders a 256x256 texture this
 way between its frames. Without the write-back, the texture kept stale bytes, which showed as
 stripes across Area 1.
+
+**Invalidating what the YUV converter and the texture path wrote** (2026-10-29). A Sofdec video
+decodes every frame into the same texture, so a cache keyed on the address kept the first frame it
+decoded -- before the converter had written anything -- and Rush 2049's intro videos showed as a
+green rectangle. `pvr::Core` now records the texture memory the converter and the texture path
+write (`take_texture_writes`), and the launcher drops the cached textures there before each render.
+Stride textures also take their row pitch from `TEXT_CONTROL` rather than from the TSP width
+(`TextureInfo::pitch`): the cache was given a stride width of zero.
 
 **Input.** The window maps a keyboard and any connected pad onto the Maple controller through the
 player's own bindings (`render/input.h`), both live at once. The defaults are the layout the
