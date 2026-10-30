@@ -43,16 +43,22 @@ public:
     // ahead" from "the guest is behind" when it reports.
     unsigned queued_samples() const;
 
-    // How full the queue is allowed to get before samples are dropped. Roughly a fifth of a second
-    // at 44.1 kHz: enough to ride out a slow frame, short enough that sound stays in step with the
-    // picture.
-    unsigned high_water = 8192;
+    // How full the queue is allowed to get before samples are dropped. About 280 ms at 44.1 kHz:
+    // enough to ride out a slow frame on top of the cushion below, short enough that sound stays
+    // in step with the picture. At 8192 the cushion pushed a catching-up guest over the mark and
+    // Daytona USA 2001 dropped eighteen blocks in a race.
+    unsigned high_water = 12288;
 
-    std::uint64_t pushed = 0, dropped = 0, blocks = 0;
+    // starved: blocks that found the device's queue already empty, so it had gone silent before
+    // they arrived. Each is an audible gap: the guest fell behind real time for that long.
+    std::uint64_t pushed = 0, dropped = 0, blocks = 0, starved = 0;
     const std::string& error() const noexcept { return error_; }
 
 private:
     static constexpr std::size_t kBlockFrames = 512;  // stereo frames per send
+    // Silence queued ahead when the device has nothing left (about 46 ms at 44.1 kHz): the room a
+    // slow frame has before it is heard.
+    static constexpr std::size_t kCushionFrames = 2048;
 
     SDL_AudioStream* stream_ = nullptr;
     std::vector<std::int16_t> block_;
