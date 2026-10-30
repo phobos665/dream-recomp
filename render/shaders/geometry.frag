@@ -23,8 +23,46 @@ layout(push_constant) uniform Push {
     float alpha_ref;  // punch-through threshold, from the hardware's own register
     vec4 clip;        // user clip rectangle in guest pixels: x0, y0, x1, y1
     int clip_mode;    // 2: draw only inside it, 3: only outside, otherwise ignored
+    int oit;          // per-pixel translucency: bits 0-2 depth compare, 3-5 source factor,
+                      // 6-8 destination factor, 9 up the polygon's place in the list
 }
 push;
+
+#ifdef DREAM_OIT_APPEND
+// Per-pixel sorting of the translucent list, first half (Renderer::draw). This build of the shader
+// does not blend: every fragment that passes the depth test against the opaque geometry goes on
+// its pixel's list, with what the resolve pass needs to blend it in the hardware's order.
+layout(std430, set = 2, binding = 0) buffer Fragments {
+    uint count;
+    uint capacity;
+    uint pad0;
+    uint pad1;
+    uvec4 fragments[];  // colour, depth, factors and place, next fragment of the pixel
+};
+layout(set = 2, binding = 1, r32ui) uniform coherent uimage2D heads;
+layout(input_attachment_index = 0, set = 2, binding = 2) uniform subpassInput opaque_depth;
+
+bool passes(int mode, float depth, float stored) {
+    switch (mode) {
+        case 0:
+            return false;
+        case 1:
+            return depth < stored;
+        case 2:
+            return depth == stored;
+        case 3:
+            return depth <= stored;
+        case 4:
+            return depth > stored;
+        case 5:
+            return depth != stored;
+        case 6:
+            return depth >= stored;
+        default:
+            return true;
+    }
+}
+#endif
 
 layout(set = 0, binding = 0) uniform sampler2D tex;
 
@@ -112,8 +150,22 @@ void main() {
     if ((push.mode & 32) != 0 && colour.a < push.alpha_ref)
         discard;
 
-    o_colour = clamp(colour, 0.0, 1.0);
-
     const float w = 100000.0 * inv_w;
-    gl_FragDepth = log2(1.0 + max(w, -0.999999)) / 34.0;
+    const float depth = log2(1.0 + max(w, -0.999999)) / 34.0;
+#ifdef DREAM_OIT_APPEND
+    // The test against the opaque depth is made here rather than by the pipeline: with the depth
+    // written by the shader, a fixed-function test would only run after the fragment was listed.
+    o_colour = vec4(0.0);  // the colour attachment is masked off in this subpass
+    if (!passes(push.oit & 7, depth, subpassLoad(opaque_depth).r))
+        discard;
+    const uint index = atomicAdd(count, 1u);
+    if (index >= capacity)
+        return;  // more translucent fragments than room for them: this one is dropped
+    const uint next = imageAtomicExchange(heads, ivec2(gl_FragCoord.xy), index);
+    fragments[index] = uvec4(packUnorm4x8(clamp(colour, 0.0, 1.0)), floatBitsToUint(depth),
+                             uint(push.oit) >> 3, next);
+#else
+    o_colour = clamp(colour, 0.0, 1.0);
+    gl_FragDepth = depth;
+#endif
 }

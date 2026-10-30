@@ -53,18 +53,33 @@ endif()
 set(_spv_dir ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 file(MAKE_DIRECTORY ${_spv_dir})
 set(_spv_headers)
-foreach(_shader triangle.vert triangle.frag geometry.vert geometry.frag present.vert present.frag)
+# Each entry is OUTPUT_NAME=SOURCE[=DEFINE]: geometry_oit.frag is geometry.frag built to list
+# translucent fragments for per-pixel sorting instead of blending them.
+foreach(_entry triangle.vert=triangle.vert triangle.frag=triangle.frag
+               geometry.vert=geometry.vert geometry.frag=geometry.frag
+               geometry_oit.frag=geometry.frag=DREAM_OIT_APPEND
+               resolve.vert=resolve.vert resolve.frag=resolve.frag
+               present.vert=present.vert present.frag=present.frag)
+  string(REPLACE "=" ";" _parts ${_entry})
+  list(GET _parts 0 _shader)
+  list(GET _parts 1 _source)
+  set(_defines)
+  list(LENGTH _parts _n)
+  if(_n GREATER 2)
+    list(GET _parts 2 _define)
+    set(_defines -D${_define})
+  endif()
   string(REPLACE "." "_" _sym ${_shader})
   set(_out ${_spv_dir}/${_sym}.h)
   # glslc -mfmt=c emits a bare initialiser list; wrap it in a declaration so the header can just
-  # be included.
+  # be included. The stage comes from the output name, which the source name also carries.
   add_custom_command(
     OUTPUT ${_out}
-    COMMAND ${DREAM_GLSLC} --target-env=vulkan1.1 -O
-            -mfmt=c -o ${_out}.inc ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${_shader}
+    COMMAND ${DREAM_GLSLC} --target-env=vulkan1.1 -O ${_defines}
+            -mfmt=c -o ${_out}.inc ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${_source}
     COMMAND ${CMAKE_COMMAND} -DIN=${_out}.inc -DOUT=${_out} -DSYM=${_sym}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/wrap_spirv.cmake
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${_shader}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${_source}
             ${CMAKE_CURRENT_SOURCE_DIR}/cmake/wrap_spirv.cmake
     COMMENT "glslc ${_shader}"
     VERBATIM)

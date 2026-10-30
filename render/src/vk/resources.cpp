@@ -87,6 +87,55 @@ void HostBuffer::destroy() {
     capacity_ = 0;
 }
 
+DeviceBuffer::~DeviceBuffer() {
+    destroy();
+}
+
+bool DeviceBuffer::create(const Context& ctx, VkDeviceSize bytes, VkBufferUsageFlags usage) {
+    destroy();
+    device_ = ctx.device();
+    VkBufferCreateInfo bci{};
+    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size = bytes;
+    bci.usage = usage;
+    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device_, &bci, nullptr, &buffer_) != VK_SUCCESS)
+        return false;
+    VkMemoryRequirements req{};
+    vkGetBufferMemoryRequirements(device_, buffer_, &req);
+    const std::uint32_t type = find_memory_type(ctx.physical_device(), req.memoryTypeBits,
+                                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type == UINT32_MAX) {
+        destroy();
+        return false;
+    }
+    VkMemoryAllocateInfo mai{};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = type;
+    if (vkAllocateMemory(device_, &mai, nullptr, &memory_) != VK_SUCCESS) {
+        destroy();
+        return false;
+    }
+    vkBindBufferMemory(device_, buffer_, memory_, 0);
+    size_ = bytes;
+    return true;
+}
+
+void DeviceBuffer::destroy() {
+    if (!device_)
+        return;
+    if (buffer_) {
+        vkDestroyBuffer(device_, buffer_, nullptr);
+        buffer_ = VK_NULL_HANDLE;
+    }
+    if (memory_) {
+        vkFreeMemory(device_, memory_, nullptr);
+        memory_ = VK_NULL_HANDLE;
+    }
+    size_ = 0;
+}
+
 AttachmentImage::~AttachmentImage() {
     destroy();
 }

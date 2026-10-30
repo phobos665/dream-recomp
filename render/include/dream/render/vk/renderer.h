@@ -31,6 +31,14 @@ struct FrameGeometry {
     FogSettings fog;
 };
 
+// The attachments a three-subpass render pass (Offscreen) gives the renderer for sorting
+// translucent fragments per pixel. Null views mean the render pass has one subpass and
+// translucent polygons are sorted per strip instead.
+struct OitTargets {
+    VkImageView colour = VK_NULL_HANDLE, depth = VK_NULL_HANDLE;
+    VkExtent2D extent{};
+};
+
 class Renderer {
 public:
     Renderer() = default;
@@ -38,7 +46,7 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    bool create(Context& ctx, VkRenderPass render_pass);
+    bool create(Context& ctx, VkRenderPass render_pass, const OitTargets& oit = {});
     // Points the renderer at the guest's video and palette memory so textures can be decoded.
     void set_memory(const std::uint8_t* vram, std::size_t vram_size,
                     const std::uint32_t* palette_ram, PaletteFormat palette_format);
@@ -58,6 +66,8 @@ public:
     bool draw_all_lists = false;
 
     const std::string& error() const noexcept { return error_; }
+    // Translucent polygons sorted per pixel, as the hardware does, rather than per strip.
+    bool sorts_per_pixel() const noexcept { return oit_; }
     // Diagnostics from the last draw.
     std::uint32_t drawn_polygons = 0, drawn_vertices = 0, pipelines = 0, textured_polygons = 0,
                   blended_polygons = 0, punch_through_polygons = 0;
@@ -83,6 +93,29 @@ private:
     };
 
     VkPipeline pipeline_for(const PipelineKey& key);
+    VkPipeline build_pipeline(VkShaderModule vs, VkShaderModule fs, bool vertices,
+                              VkCullModeFlags cull,
+                              const VkPipelineDepthStencilStateCreateInfo& depth,
+                              const VkPipelineColorBlendAttachmentState& blend,
+                              std::uint32_t subpass);
+
+    // Per-pixel sorting of the translucent list (draw()): descriptor set 2 holds the fragment
+    // lists, their heads and the two attachments the subpasses read.
+    bool create_oit(const OitTargets& oit);
+    VkPipeline append_pipeline(std::uint32_t cull_mode);
+    void destroy_oit();
+    bool oit_ = false;
+    VkShaderModule fs_append_ = VK_NULL_HANDLE, vs_resolve_ = VK_NULL_HANDLE,
+                   fs_resolve_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout oit_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool oit_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet oit_set_ = VK_NULL_HANDLE;
+    DeviceBuffer fragments_;
+    AttachmentImage heads_;
+    bool heads_ready_ = false;  // moved to the general layout, which it then stays in
+    std::uint32_t fragment_capacity_ = 0;
+    std::unordered_map<std::uint32_t, VkPipeline> append_pipelines_;  // by cull mode
+    VkPipeline resolve_pipeline_ = VK_NULL_HANDLE;
 
     Context* ctx_ = nullptr;
     VkRenderPass render_pass_ = VK_NULL_HANDLE;

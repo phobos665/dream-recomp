@@ -175,13 +175,16 @@ struct Live {
             error = window.error();
             return false;
         }
+        // Translucent polygons are sorted per pixel, as the hardware does, where the device can.
+        // DREAM_NO_OIT=1 keeps the per-strip sort, to compare the two.
+        offscreen.sort_per_pixel = std::getenv("DREAM_NO_OIT") == nullptr;
         if (!offscreen.create(window.context(), w, h)) {
             error = offscreen.error();
             return false;
         }
         // The renderer's pipelines are built against the offscreen render pass, not the window's:
         // that is where the geometry is drawn.
-        if (!renderer.create(window.context(), offscreen.render_pass())) {
+        if (!renderer.create(window.context(), offscreen.render_pass(), offscreen.oit_targets())) {
             error = renderer.error();
             return false;
         }
@@ -191,8 +194,9 @@ struct Live {
         }
         renderer.set_memory(memory_.vram(), dream::mem::DcMemory::kVramSize,
                             pvr_.reg_block() + 0x1000 / 4, palette_format());
-        std::printf("window: %s, drawing at %ux%u\n", window.context().caps().device_name.c_str(),
-                    w, h);
+        std::printf("window: %s, drawing at %ux%u, translucency sorted per %s\n",
+                    window.context().caps().device_name.c_str(), w, h,
+                    renderer.sorts_per_pixel() ? "pixel" : "strip");
         return true;
     }
 
