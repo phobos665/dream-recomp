@@ -16,6 +16,9 @@ set(DREAM_SH4_PROGRAMS
   "p10_longjmp|p10_longjmp.bin|0x8c030000|0x8c030000:0x8c030024:main 0x8c030024:0x8c03003c:save 0x8c03003c:0x8c030058:deep 0x8c030058:0x8c030070:restore"
   "p11_condfall|p11_condfall.bin|0x8c010000|0x8c010000:0x8c010006:loop 0x8c010006:0x8c01000c:done"
   "p12_selfcmp|p12_selfcmp.bin|0x8c010000|0x8c010000:0x8c01005c:selfcmp"
+  # Its own base for the same reason as p10: the jmp resolves its target through the function
+  # table. The first range ends right after the jmp's slot on purpose (see the .s).
+  "p14_slotjoin|p14_slotjoin.bin|0x8c040000|0x8c040000:0x8c04000c:slotjoin 0x8c04000c:0x8c040012:slotjoin_tail 0x8c040012:0x8c040016:slotjoin_other"
   "p13_slotcase|p13_slotcase.bin|0x8c010000|0x8c010000:0x8c010024:slotcase"
   # GCC-compiled C unit (tests/sh4/cprogs, `make specs` prints this line)
   "c1_idioms|../cprogs/c1_idioms.bin|0x8c010000|0x8c010000:0x8c010024:div_mod 0x8c010028:0x8c010072:udiv_mix 0x8c010080:0x8c0100e4:dense_switch 0x8c0100e8:0x8c010100:mul64 0x8c010100:0x8c010132:sub64 0x8c010134:0x8c010178:pack_bytes 0x8c010180:0x8c0101d6:vec_transform 0x8c0101d8:0x8c010222:sort_words 0x8c010224:0x8c010246:dot3 0x8c010248:0x8c01026a:clamp_scale 0x8c010270:0x8c01027c:float_to_fixed 0x8c010280:0x8c010526:fib 0x8c01052c:0x8c010552:str_len 0x8c010554:0x8c010574:mem_copy 0x8c010578:0x8c0106b8:udivsi3_i4i 0x8c01059e:0x8c0105d4:udivsi3_i4i_059e 0x8c0105cc:0x8c0105d4:udivsi3_i4i_05cc 0x8c0105d4:0x8c010648:udivsi3_i4i_05d4 0x8c010648:0x8c010796:sdivsi3_i4i 0x8c010674:0x8c0106b8:sdivsi3_i4i_0674 0x8c01069a:0x8c0106b8:sdivsi3_i4i_069a"

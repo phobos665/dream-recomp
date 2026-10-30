@@ -234,6 +234,31 @@ TEST_CASE("p13_slotcase: a switch case in the slot of a bt/s runs the slot once"
     }
 }
 
+// A branch into another branch's delay slot runs the slot and carries on after the pair. Here the
+// function's range ends right after the slot, so the code that follows is another function: the
+// slot copy has to tail-call it. It used to fall off the end and return, with the rest of the body
+// unrun, which in Daytona USA 2001 left four pushed registers on the stack.
+TEST_CASE("p14_slotjoin: entering a jmp's slot carries on after the pair") {
+    dream::BareMemory m;
+    load_image(m, "p14_slotjoin.bin", 0x8C040000);
+    {
+        Ctx c = fresh();
+        c.r[4] = 0;  // bt/s taken: into the slot, then on to _slotjoin_tail
+        c.r[5] = 10;
+        dream::gen::slotjoin(c, m);
+        CHECK(c.r[5] == 13u);   // both slots ran
+        CHECK(c.r[0] == 113u);  // _slotjoin_tail: r5 + 100
+    }
+    {
+        Ctx c = fresh();
+        c.r[4] = 0x8C040012;  // not taken: the jmp goes to _slotjoin_other
+        c.r[5] = 10;
+        dream::gen::slotjoin(c, m);
+        CHECK(c.r[5] == 13u);
+        CHECK(c.r[0] == 7u);
+    }
+}
+
 // A resume entry polls for interrupts before it dispatches, and an interrupt taken there has to
 // see the pc being resumed: a handler that switches tasks saves that pc as the task's SPC, and the
 // task carries on from it when it is switched back. Recording the function's entry instead sent

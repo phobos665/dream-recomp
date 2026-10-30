@@ -219,9 +219,12 @@ public:
                     addr += *r0;
                 }
                 addr = normalise(addr);
-                for (std::uint32_t w = addr & ~3u; w < addr + size; w += 4)
-                    if (img_.contains(w, 4))
-                        out.insert(w);
+                // Bounds in 64 bits: a store just below 4 GB (data decoded as code can write to
+                // 0xFFFFFFFE) wrapped w past zero before it reached addr + size, forever.
+                const std::uint64_t end = std::uint64_t{addr} + size;
+                for (std::uint64_t w = addr & ~3u; w < end; w += 4)
+                    if (img_.contains(static_cast<std::uint32_t>(w), 4))
+                        out.insert(static_cast<std::uint32_t>(w));
             }
         }
     }
@@ -1052,6 +1055,14 @@ private:
             out << label(pc + 2) << ":\n";
             out << "    " << slot_code << "\n";
             out << label(pc) << "_skip:;\n";
+            // Both paths carry on at pc+4. Said explicitly, because the block emitted next is not
+            // necessarily that one, and when pc+4 lies outside this function there is no block at
+            // all: falling off the end returned to the caller with the rest of the body unrun.
+            if (blocks_.count(pc + 4))
+                out << "    goto " << label(pc + 4) << ";\n";
+            else if (!in_range(pc + 4))
+                out << "    c.pc = " << hexu(pc + 4) << "; " << call_target_expr(pc + 4)
+                    << " return;\n";
         }
         if (call_returns_.count(pc + 4) && !blocks_.count(pc + 4))
             out << label(pc + 4) << ":;\n";  // resume point after the call
