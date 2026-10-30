@@ -1,0 +1,56 @@
+# DAYTONAUSA2001, MK-5103750
+# Written by `dcdisc new-game`. Everything here is read off the disc or is the standard Katana
+# layout; nothing from the disc itself is ever committed.
+
+[game]
+id = "daytona2001"
+title = "DAYTONAUSA2001"
+region = "Europe"
+product = "MK-5103750"
+
+[disc]
+image = "disc/daytona2001.gdi"
+
+[binary]
+path = "extracted/fs/1ST_READ.BIN"
+load_address = 0x8C010000    # where the console's BIOS loads the file
+link_address = 0x0C010000    # the same RAM through a different address; what the code assumes
+entry = 0x8C010000           # the first instruction
+
+# Addresses discovery does not reach, and regions the program copies and runs elsewhere, both go
+# here. Run the launcher with --suggest-config FILE and it writes them for you. These come from a
+# run through the menus into a race at Three Seven Speedway.
+[functions]
+extra = [0x0C1D426A, 0x0C1D4274, 0x0C1D433C, 0x0C1D434E]
+
+# The exception and interrupt handlers the program copies under VBR (0x8C000000), plus one helper:
+# without these, every interrupt ran in the interpreter.
+[[relocations]]
+source = 0x0C1EA514
+size = 0x34
+dest = 0x8C000000
+
+[[relocations]]
+source = 0x0C078CF0
+size = 0x38
+dest = 0x8C000078
+
+[[relocations]]
+source = 0x0C1EA480
+size = 0x34
+dest = 0x8C000100
+
+[[relocations]]
+source = 0x0C1EA480
+size = 0x34
+dest = 0x8C000400
+
+[[relocations]]
+source = 0x0C1EA4B8
+size = 0x58
+dest = 0x8C000600
+
+[[relocations]]
+source = 0x0C1646C0
+size = 0xCC
+dest = 0x8C00322C
