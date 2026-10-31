@@ -1051,6 +1051,10 @@ void Mixer::sample(std::int16_t& left, std::int16_t& right) {
         mixl >>= 2;
         mixr >>= 2;
     }
+    mixl >>= headroom;
+    mixr >>= headroom;
+    if (before_clamp)
+        before_clamp(mixl, mixr);
     mixl = std::clamp(mixl, -32768, 32767);
     mixr = std::clamp(mixr, -32768, 32767);
     if (mixl | mixr)

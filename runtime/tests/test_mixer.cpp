@@ -1,10 +1,12 @@
 // AICA sound generation (WP2.5 second half): a looping 16-bit PCM channel keyed on through the
 // registers produces output that follows the envelope, a noise channel produces output, the DSP
 // idles on an empty programme, and the mix is deterministic.
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 
 #include "dream/runtime/aica/aica.h"
+#include "dream/runtime/aica/limiter.h"
 #include "dream/runtime/system.h"
 
 #include "doctest.h"
@@ -131,4 +133,30 @@ TEST_CASE("mixer: identical inputs give identical output") {
         b.aica.sample_tick();
         REQUIRE(a.aica.last_left == b.aica.last_left);
     }
+}
+
+TEST_CASE("limiter: a mix under the range passes unchanged, 64 samples later") {
+    dream::aica::Limiter lim;
+    for (int i = 0; i < 1000; ++i) {
+        std::int32_t l = (i * 37) % 30000 - 15000, r = -l;
+        lim.process(l, r);
+        const int from = i - 64;
+        const std::int32_t want = from < 0 ? 0 : (from * 37) % 30000 - 15000;
+        CHECK(l == want);
+        CHECK(r == -want);
+    }
+}
+
+TEST_CASE("limiter: a peak past the range leaves under it, and the gain comes back") {
+    dream::aica::Limiter lim;
+    std::int32_t most = 0, last = 0;
+    for (int i = 0; i < 44100; ++i) {
+        // A burst at four times the range for 10 ms, then a steady mix under it.
+        std::int32_t l = i >= 1000 && i < 1441 ? 4 * 32767 : 10000, r = l;
+        lim.process(l, r);
+        most = std::max(most, l);
+        last = l;
+    }
+    CHECK(most <= 32767);
+    CHECK(last == 10000);
 }

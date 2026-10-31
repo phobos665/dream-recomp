@@ -155,3 +155,27 @@ overlay = true
     CHECK_FALSE(c.relocations[1].no_fold);
     CHECK(c.relocations[1].overlay);
 }
+
+TEST_CASE("game config: [audio] sets the mix's headroom and its limiter") {
+    const char* base = R"(
+[game]
+id = "x"
+title = "X"
+[binary]
+path = "x.bin"
+load_address = 0x8C010000
+entry = 0x8C010000
+)";
+    GameConfig c;
+    std::string err;
+    REQUIRE(parse_game_config(base, ".", c, err));
+    CHECK(c.audio_headroom == 0u);
+    CHECK_FALSE(c.audio_limiter);
+    REQUIRE_MESSAGE(parse_game_config(std::string(base) + "[audio]\nheadroom = 1\nlimiter = true\n",
+                                      ".", c, err),
+                    err);
+    CHECK(c.audio_headroom == 1u);
+    CHECK(c.audio_limiter);
+    CHECK_FALSE(parse_game_config(std::string(base) + "[audio]\nheadroom = 5\n", ".", c, err));
+    CHECK(err.find("audio.headroom") != std::string::npos);
+}

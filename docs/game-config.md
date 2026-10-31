@@ -41,6 +41,10 @@ sweep = true                         # linear sweep of gaps (default true)
 
 [hooks]                              # guest address -> hook name (Phase 3)
 "0x0C010000" = "boot"
+
+[audio]                              # optional; the launcher's sound
+headroom = 1                         # bits the AICA's final mix drops before its 16-bit clamp, 0 to 4 (default 0)
+limiter = true                       # a look-ahead limiter brings the peaks left under the clamp (default false)
 ```
 
 Rules the loader enforces: `game.id`, `game.title`, `binary.path`, `binary.load_address` and

@@ -163,6 +163,15 @@ bool finish(const toml::table& t, const std::filesystem::path& dir, GameConfig& 
     if (!get_addr_map(t["hle"], "hle", c.hle, error) ||
         !get_addr_map(t["hooks"], "hooks", c.hooks, error))
         return false;
+    std::uint32_t headroom = 0;
+    if (!get_u32(t["audio"]["headroom"], "audio.headroom", headroom, error, false))
+        return false;
+    if (headroom > 4) {
+        error = "audio.headroom must be 0 to 4";
+        return false;
+    }
+    c.audio_headroom = headroom;
+    c.audio_limiter = t["audio"]["limiter"].value_or(false);
     return true;
 }
 
