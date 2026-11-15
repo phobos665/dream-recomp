@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "dream/render/vk/context.h"
 #include "dream/render/vk/resources.h"
@@ -43,7 +44,8 @@ public:
     bool upload(VkCommandBuffer cmd, const std::uint32_t* rgba, std::uint32_t width,
                 std::uint32_t height,
                 const std::function<void(std::uint32_t* pixels, std::uint32_t width,
-                                         std::uint32_t height)>& decorate = {});
+                                         std::uint32_t height)>& decorate = {},
+                std::uint32_t slot = 0);
     // Draws the uploaded image, fitted to `target`. Call inside the window's render pass. False
     // when nothing has been uploaded yet, which leaves the cleared background showing.
     bool draw(VkCommandBuffer cmd, VkExtent2D target);
@@ -73,7 +75,12 @@ private:
     VkImage image_ = VK_NULL_HANDLE;
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
     VkImageView view_ = VK_NULL_HANDLE;
-    HostBuffer staging_;
+    // One per frame in flight: the GPU may still be copying out of last frame's buffer while the
+    // CPU fills this frame's, and with a single buffer that showed as tearing/black flicker
+    // whenever frames were presented faster than the GPU consumed them (the paused binding screen).
+    static constexpr std::uint32_t kStagingSlots = 2;
+    HostBuffer staging_[kStagingSlots];
+    std::vector<std::uint32_t> scratch_;  // frame + overlay are composed here, then copied once
     std::uint32_t width_ = 0, height_ = 0;
     bool uploaded_ = false;
     std::string error_;

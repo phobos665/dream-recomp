@@ -74,6 +74,8 @@ public:
     // which case the caller should call recreate_swapchain() and try again.
     bool begin_frame(std::uint32_t& image_index, VkCommandBuffer& cmd);
     bool end_frame(std::uint32_t image_index);
+    // Which of the frames in flight begin_frame() just handed out; its resources are idle.
+    std::uint32_t frame_slot() const noexcept { return frame_; }
     bool recreate_swapchain();
 
     // True while the user has not closed the window; pumps the event queue and refreshes the
