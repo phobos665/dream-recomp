@@ -1,3 +1,4 @@
+#include <utility>
 #include <vector>
 
 #include "dream/runtime/mem/dc_memory.h"
@@ -253,4 +254,51 @@ TEST_CASE("memory: a device write marks the journal as one that cannot be undone
     CHECK(dev.writes == 1);
     // The device write is not in the journal, so undoing cannot silently half-revert it.
     CHECK(m.journal.size() == 1);
+}
+
+namespace {
+std::vector<std::pair<std::uint32_t, std::uint32_t>> take_dirty(DcMemory& m) {
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> runs;
+    m.take_vram_dirty(
+        [&](std::uint32_t begin, std::uint32_t end) { runs.push_back({begin, end}); });
+    return runs;
+}
+}  // namespace
+
+TEST_CASE("memory: guest stores into VRAM are reported once, as runs of 4 KB pages") {
+    DcMemory m;
+    CHECK(take_dirty(m).empty());
+    m.write32(0xA4001000u, 1);  // 64-bit view, page 1
+    m.write8(0xA4002FFFu, 2);   // page 2
+    m.write32(0xA4005000u, 3);  // page 5: not adjacent
+    const auto runs = take_dirty(m);
+    REQUIRE(runs.size() == 2);
+    CHECK(runs[0] == std::pair<std::uint32_t, std::uint32_t>{0x1000u, 0x3000u});
+    CHECK(runs[1] == std::pair<std::uint32_t, std::uint32_t>{0x5000u, 0x6000u});
+    CHECK(take_dirty(m).empty());  // taking clears
+}
+
+TEST_CASE("memory: VRAM dirty tracking sees the 32-bit view, 64-bit stores and store queues") {
+    DcMemory m;
+    m.write32(0xA5000000u, 1);  // 32-bit view: word 0 of bank 0 is VRAM offset 0
+    auto runs = take_dirty(m);
+    REQUIRE(runs.size() == 1);
+    CHECK(runs[0].first == 0u);
+    m.write64(0xA4010000u, 0x1122334455667788ull);
+    runs = take_dirty(m);
+    REQUIRE(runs.size() == 1);
+    CHECK(runs[0] == std::pair<std::uint32_t, std::uint32_t>{0x10000u, 0x11000u});
+    m.write32(0xFF000038u, 1u << 2);  // QACR0: area 1 (VRAM)
+    for (std::uint32_t i = 0; i < 8; ++i) m.sq_write32(0xE0000000u + 4 * i, i);
+    m.sq_flush(0xE0000000u | 0x00020000u);  // -> 0x04020000
+    runs = take_dirty(m);
+    REQUIRE(runs.size() == 1);
+    CHECK(runs[0] == std::pair<std::uint32_t, std::uint32_t>{0x20000u, 0x21000u});
+}
+
+TEST_CASE("memory: stores outside VRAM leave the dirty set empty") {
+    DcMemory m;
+    m.write32(0x8C001000u, 1);  // main RAM
+    m.write32(0xA0800000u, 2);  // sound RAM
+    CHECK(take_dirty(m).empty());
 }

@@ -89,6 +89,22 @@ public:
     // framebuffer takes four of them, and palette memory lives at offset 0x1000 inside it.
     const std::uint32_t* reg_block() const noexcept { return regs_.data(); }
 
+    // The span of video memory the texture path and the YUV converter have written since the last
+    // call, as byte offsets into VRAM. A renderer that caches decoded textures asks before each
+    // frame and drops what lies in the span; without it a texture the guest rewrites in place (an
+    // FMV, a streamed texture) stays frozen at the first frame decoded. Returns false when nothing
+    // was written. Writes the guest CPU makes straight into VRAM are tracked by DcMemory instead
+    // (take_vram_dirty).
+    bool take_texture_dirty(std::uint32_t& begin, std::uint32_t& end) const noexcept {
+        if (dirty_hi_ <= dirty_lo_)
+            return false;
+        begin = dirty_lo_;
+        end = dirty_hi_;
+        dirty_lo_ = ~std::uint32_t{0};
+        dirty_hi_ = 0;
+        return true;
+    }
+
     Ta ta;
     std::function<void()> on_first_ta_data;
     // Called when the guest starts a render, with the parameter stream that render will draw.
@@ -108,6 +124,17 @@ private:
     // this way, so a title playing an FMV draws nothing at all without it.
     void yuv_word(std::uint32_t value);
     void yuv_macroblock();
+
+    void mark_texture_dirty(std::uint32_t offset) noexcept {
+        offset &= (mem::DcMemory::kVramSize - 1) & ~3u;
+        if (offset < dirty_lo_)
+            dirty_lo_ = offset;
+        if (offset + 4 > dirty_hi_)
+            dirty_hi_ = offset + 4;
+    }
+    // Mutable: the renderer only holds the core const, and taking the span is bookkeeping, not
+    // guest-visible state.
+    mutable std::uint32_t dirty_lo_ = ~std::uint32_t{0}, dirty_hi_ = 0;
 
     std::array<std::uint8_t, 384> yuv_mb_{};  // 64 U + 64 V + 256 Y, in arrival order
     std::uint32_t yuv_fill_ = 0;              // bytes of the current macroblock collected

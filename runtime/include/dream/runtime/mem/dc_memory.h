@@ -240,7 +240,49 @@ public:
     // The 32-bit VRAM view interleaves the two 4 MB banks word by word onto the 64-bit view.
     static std::uint32_t vram_map32(std::uint32_t offset32) noexcept;
 
+    // Which 4 KB pages of VRAM the guest CPU (or a burst through the store queue) wrote since the
+    // last call. Offsets are in the 64-bit view, which is where the renderer reads textures from.
+    // Calls `fn(begin, end)` once per run of consecutive dirty pages and clears them. Writes made
+    // by the PVR itself (TA texture path, YUV converter) are not the only way a title changes a
+    // texture: some copy theirs straight into VRAM with ordinary stores.
+    template <typename Fn>
+    void take_vram_dirty(Fn&& fn) {
+        if (!vram_dirty_any_)
+            return;
+        vram_dirty_any_ = false;
+        std::uint32_t run = ~0u;
+        for (std::uint32_t p = 0; p <= kVramPages; ++p) {
+            const bool d = p < kVramPages && vram_dirty_[p];
+            if (d && run == ~0u)
+                run = p;
+            if (!d && run != ~0u) {
+                fn(run << kVramPageShift, p << kVramPageShift);
+                run = ~0u;
+            }
+            if (p < kVramPages)
+                vram_dirty_[p] = 0;
+        }
+    }
+
 private:
+    static constexpr std::uint32_t kVramPageShift = 12;
+    static constexpr std::uint32_t kVramPages = kVramSize >> kVramPageShift;
+    // Called with the host pointer a store resolved to; cheap when it is not VRAM.
+    void note_vram_write(const std::uint8_t* p, std::uint32_t bytes) noexcept {
+        const std::uintptr_t off =
+            reinterpret_cast<std::uintptr_t>(p) - reinterpret_cast<std::uintptr_t>(vram_.get());
+        if (off >= kVramSize)
+            return;
+        for (std::uint32_t pg = static_cast<std::uint32_t>(off) >> kVramPageShift;
+             pg <= (static_cast<std::uint32_t>(off) + bytes - 1) >> kVramPageShift &&
+             pg < kVramPages;
+             ++pg)
+            vram_dirty_[pg] = 1;
+        vram_dirty_any_ = true;
+    }
+    std::uint8_t vram_dirty_[kVramSize >> 12]{};
+    bool vram_dirty_any_ = false;
+
     struct Target {
         enum Kind { kNone, kBytes, kMmio } kind = kNone;
         std::uint8_t* bytes = nullptr;  // kBytes: host pointer to the first byte
