@@ -312,16 +312,18 @@ struct Live {
         // are meant to produce the game's own pixels, which is what makes one comparable with
         // another and usable as a reference image.
         if (show_fps || menu.is_open())
-            presenter.upload(cmd, source, shown.width, shown.height,
-                             [this](std::uint32_t* px, std::uint32_t w, std::uint32_t h) {
-                                 if (show_fps)
-                                     draw_counter(px, w, h);
-                                 // Last, so the screen sits over the counter rather than under it.
-                                 if (menu.is_open())
-                                     menu.draw(px, w, w, h, window.devices());
-                             });
+            presenter.upload(
+                cmd, source, shown.width, shown.height,
+                [this](std::uint32_t* px, std::uint32_t w, std::uint32_t h) {
+                    if (show_fps)
+                        draw_counter(px, w, h);
+                    // Last, so the screen sits over the counter rather than under it.
+                    if (menu.is_open())
+                        menu.draw(px, w, w, h, window.devices());
+                },
+                window.frame_slot());
         else
-            presenter.upload(cmd, source, shown.width, shown.height);
+            presenter.upload(cmd, source, shown.width, shown.height, {}, window.frame_slot());
         VkClearValue clears[2]{};
         clears[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
         clears[1].depthStencil = {0.0f, 0};

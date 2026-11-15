@@ -216,7 +216,7 @@ void Presenter::destroy() {
     pool_ = VK_NULL_HANDLE;
     set_ = VK_NULL_HANDLE;
     set_layout_ = VK_NULL_HANDLE;
-    staging_.destroy();
+    for (auto& s : staging_) s.destroy();
     ctx_ = nullptr;
 }
 
@@ -290,19 +290,27 @@ bool Presenter::ensure_image(std::uint32_t width, std::uint32_t height) {
 
 bool Presenter::upload(
     VkCommandBuffer cmd, const std::uint32_t* rgba, std::uint32_t width, std::uint32_t height,
-    const std::function<void(std::uint32_t*, std::uint32_t, std::uint32_t)>& decorate) {
+    const std::function<void(std::uint32_t*, std::uint32_t, std::uint32_t)>& decorate,
+    std::uint32_t slot) {
     if (!ctx_ || !rgba || width == 0 || height == 0)
         return false;
     if (!ensure_image(width, height))
         return false;
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(width) * height * 4;
-    if (!staging_.ensure(*ctx_, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) {
+    HostBuffer& staging = staging_[slot % kStagingSlots];
+    if (!staging.ensure(*ctx_, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) {
         error_ = "could not allocate the presenter's staging buffer";
         return false;
     }
-    staging_.write(rgba, static_cast<std::size_t>(bytes));
-    if (decorate)
-        decorate(static_cast<std::uint32_t*>(staging_.mapped()), width, height);
+    if (decorate) {
+        // Compose in ordinary memory and write the mapped buffer once: the overlay blends over the
+        // pixels beneath it, and doing that in mapped (possibly uncached) memory is slow.
+        scratch_.assign(rgba, rgba + static_cast<std::size_t>(width) * height);
+        decorate(scratch_.data(), width, height);
+        staging.write(scratch_.data(), static_cast<std::size_t>(bytes));
+    } else {
+        staging.write(rgba, static_cast<std::size_t>(bytes));
+    }
 
     // The image was either just created (undefined) or read by the fragment shader last frame.
     // Either way it becomes a transfer destination, and the copy waits for that read to finish.
@@ -324,7 +332,7 @@ bool Presenter::upload(
     VkBufferImageCopy copy{};
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copy.imageExtent = {width, height, 1};
-    vkCmdCopyBufferToImage(cmd, staging_.handle(), image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+    vkCmdCopyBufferToImage(cmd, staging.handle(), image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                            &copy);
 
     VkImageMemoryBarrier to_read = to_dst;
