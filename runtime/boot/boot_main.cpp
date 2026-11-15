@@ -174,6 +174,20 @@ struct Live {
         // every frame.
         if (renderer.textures().set_palette(pvr_.reg_block() + 0x1000 / 4, palette_format()))
             ++palette_changes;
+        // Textures the guest rewrote since the last frame (an FMV streams into the same address
+        // every frame) must be decoded again; the cache is keyed on the texture's description,
+        // which does not change when the pixels do.
+        {
+            std::uint32_t dirty_begin = 0, dirty_end = 0;
+            if (pvr_.take_texture_dirty(dirty_begin, dirty_end))
+                renderer.textures().invalidate_range(dirty_begin, dirty_end);
+        }
+        // Likewise anything the guest CPU stored into video memory itself, or sent through a store
+        // queue burst: a title can copy its textures in with ordinary stores, and the cache would
+        // keep showing the previous picture at that address.
+        memory_.take_vram_dirty([this](std::uint32_t begin, std::uint32_t end) {
+            renderer.textures().invalidate_range(begin, end);
+        });
         // A render to texture draws into the same offscreen image as the frames, and a vertical
         // blank can come before the next frame replaces it. The window keeps the last frame.
         const bool to_texture = (pvr_.reg(0x060) & 0x01000000u) != 0;

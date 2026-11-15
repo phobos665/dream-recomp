@@ -152,3 +152,16 @@ TEST_CASE("pvr: STARTRENDER completes on the clock; texture and frame-buffer pat
         m.write32(0x10000000u + 4 * i, i == 0 ? Rig::pcw(pvr::kEndOfList, pvr::kOpaque) : 0);
     CHECK(r.core.ta.chunks == before + 1);
 }
+
+TEST_CASE("pvr: texture-path writes are reported as a span for the texture cache, once") {
+    Rig r;
+    auto& m = r.sys.memory;
+    std::uint32_t begin = 0, end = 0;
+    CHECK(!r.core.take_texture_dirty(begin, end));
+    m.write32(0x11000100u, 1);
+    m.write32(0x11000200u, 2);
+    REQUIRE(r.core.take_texture_dirty(begin, end));
+    CHECK(begin == 0x100u);
+    CHECK(end == 0x204u);
+    CHECK(!r.core.take_texture_dirty(begin, end));  // taking clears
+}

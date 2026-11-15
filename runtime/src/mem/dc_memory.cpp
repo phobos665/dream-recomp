@@ -256,6 +256,7 @@ void DcMemory::store(std::uint32_t a, T v) {
                                sizeof(T)});
         }
         std::memcpy(t.bytes, &v, sizeof(T));
+        note_vram_write(t.bytes, sizeof(T));
         note_ram_write(a, static_cast<std::uint64_t>(static_cast<std::make_unsigned_t<T>>(v)),
                        sizeof(T));
         return;
@@ -373,6 +374,7 @@ void DcMemory::write64(std::uint32_t a, std::uint64_t v) {
             journal.push_back({a + 4, old_hi, hi, 4});
         }
         std::memcpy(t.bytes, &v, 8);
+        note_vram_write(t.bytes, 8);
         // Two 4-byte reports, the same split the device path below uses, so a pair written here
         // hashes identically to the same pair written as two stores.
         note_ram_write(a, lo, 4);
@@ -416,6 +418,7 @@ void DcMemory::sq_flush(std::uint32_t a) {
                 journal.push_back({dest + 4 * i, old, words[i], 4});
             }
         std::memcpy(t.bytes, words, 32);
+        note_vram_write(t.bytes, 32);
         // A burst into RAM is eight stores as far as anything watching memory is concerned. Until
         // this was here the hash and the watch saw none of them.
         if (tracing_writes())
