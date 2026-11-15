@@ -19,7 +19,8 @@ layout(push_constant) uniform Push {
     vec2 offset;
     int mode;         // bit 0-1 shading instruction, 2 textured, 3 ignore texture alpha,
                       // 4 offset colour, 5 alpha test, 6 use alpha, 7-8 fog control,
-                      // 9 colour clamp
+                      // 9 colour clamp, 10 translucent list,
+                      // 11/12 the opaque/soft half of a depth-writing translucent polygon
     float alpha_ref;  // punch-through threshold, from the hardware's own register
     vec4 clip;        // user clip rectangle in guest pixels: x0, y0, x1, y1
     int clip_mode;    // 2: draw only inside it, 3: only outside, otherwise ignored
@@ -110,6 +111,19 @@ void main() {
     // a pixel outright rather than blending, so the list can be drawn with depth writes on and in
     // any order. Anything at or below the threshold is not drawn at all.
     if ((push.mode & 32) != 0 && colour.a < push.alpha_ref)
+        discard;
+
+    // A translucent polygon's fully transparent texels draw nothing, so they must not write depth
+    // either: with writes on (the game asks for them) they would hide whatever is drawn behind
+    // them afterwards, as a hard rectangle around every sprite.
+    if ((push.mode & 1024) != 0 && colour.a < 0.004)
+        discard;
+    // Translucent polygons that write depth are drawn twice (renderer.cpp): bit 11 keeps only the
+    // effectively opaque pixels, bit 12 only the others, so depth is written where the surface
+    // really is solid and nowhere else.
+    if ((push.mode & 2048) != 0 && colour.a < 0.9)
+        discard;
+    if ((push.mode & 4096) != 0 && colour.a >= 0.9)
         discard;
 
     o_colour = clamp(colour, 0.0, 1.0);
