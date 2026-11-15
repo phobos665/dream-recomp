@@ -174,6 +174,8 @@ struct Live {
         // every frame.
         if (renderer.textures().set_palette(pvr_.reg_block() + 0x1000 / 4, palette_format()))
             ++palette_changes;
+        // TEXT_CONTROL bits 4:0: the row distance of stride textures, in units of 32 texels.
+        renderer.textures().set_stride((pvr_.reg(0x0E4) & 0x1Fu) * 32u);
         // A render to texture draws into the same offscreen image as the frames, and a vertical
         // blank can come before the next frame replaces it. The window keeps the last frame.
         const bool to_texture = (pvr_.reg(0x060) & 0x01000000u) != 0;
