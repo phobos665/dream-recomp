@@ -330,3 +330,41 @@ TEST_CASE("texture: the size a texture occupies bounds the cache's invalidation 
     info.format = PixelFormat::Rgb565;
     CHECK(info.size_bytes() == 256u * 8u + 64u * 64u / 4u);  // codebook plus one index per block
 }
+
+TEST_CASE("texture: a stride texture keeps its TSP size and reads rows at the stride") {
+    // 16-bit scan-order texture with the stride bit set: 8x2 texels whose rows are 16 texels
+    // (TEXT_CONTROL's stride) apart. An FMV is the usual case: the polygons' UVs are relative to
+    // the TSP size, only the row distance in memory differs.
+    const u32 stride_bit = 1u << 25;
+    TextureInfo info;
+    REQUIRE(describe_texture(make_tcw(0, 1, /*twiddled=*/false) | stride_bit, make_tsp(0, 0), 16,
+                             info));
+    CHECK(info.stride);
+    CHECK_FALSE(info.twiddled);
+    CHECK(info.width == 8);  // not replaced by the stride
+    CHECK(info.height == 8);
+    CHECK(info.pitch == 16);
+
+    auto v = vram();
+    put16(v, 0, 0xF800u);       // row 0, texel 0: red
+    put16(v, 2 * 7, 0x001Fu);   // row 0, texel 7: blue
+    put16(v, 2 * 8, 0xFFFFu);   // where a width-8 reader would look for row 1: white
+    put16(v, 2 * 16, 0x07E0u);  // row 1 starts 16 texels in: green
+    std::vector<u32> pixels;
+    std::uint32_t palette[1024] = {};
+    REQUIRE(decode_texture(info, v.data(), v.size(), palette, pixels));
+    REQUIRE(pixels.size() == 64);
+    CHECK(pixels[0] == 0xFF0000FFu);  // RGBA in memory order: red
+    CHECK(pixels[7] == 0xFFFF0000u);  // blue
+    CHECK(pixels[8] == 0xFF00FF00u);  // row 1 comes from the stride, not from the white texel
+}
+
+TEST_CASE("texture: without a stride register value the pitch is the width") {
+    TextureInfo info;
+    REQUIRE(
+        describe_texture(make_tcw(0, 1, /*twiddled=*/false) | (1u << 25), make_tsp(1, 0), 0, info));
+    CHECK(info.width == 16);
+    CHECK(info.pitch == 16);
+    REQUIRE(describe_texture(make_tcw(0, 1, /*twiddled=*/false), make_tsp(1, 0), 32, info));
+    CHECK(info.pitch == 16);  // a plain scan-order texture ignores the stride
+}

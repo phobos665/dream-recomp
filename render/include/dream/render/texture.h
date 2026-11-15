@@ -41,6 +41,11 @@ enum class PaletteFormat : unsigned { Argb1555 = 0, Rgb565 = 1, Argb4444 = 2, Ar
 struct TextureInfo {
     std::uint32_t address = 0;  // byte offset into the 64-bit view of video memory
     std::uint32_t width = 8, height = 8;
+    // Texels from one row to the next in memory, for a scan-order texture. Equal to the width
+    // except for a stride texture, whose rows are TEXT_CONTROL's stride apart while its size (and
+    // so its UV range) is still the one in the TSP word. An FMV is the usual case: a 320-texel
+    // stride inside a 512-wide texture.
+    std::uint32_t pitch = 8;
     PixelFormat format = PixelFormat::Argb1555;
     bool twiddled = true;
     bool vq = false;

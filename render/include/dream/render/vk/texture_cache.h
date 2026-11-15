@@ -46,6 +46,14 @@ public:
     // render to texture apart from ordinary double buffering, because a double-buffered title
     // never samples the buffer it just wrote. Returns the number dropped.
     std::size_t invalidate_range(std::uint32_t begin, std::uint32_t end);
+    // The row distance of stride textures, in texels, from TEXT_CONTROL. Drops the cache when it
+    // changes, since every stride texture decoded so far was read with the old one.
+    void set_stride(std::uint32_t texels) {
+        if (texels == stride_)
+            return;
+        stride_ = texels;
+        invalidate();
+    }
 
     // The descriptor set for a polygon's texture, or VK_NULL_HANDLE when it cannot be decoded.
     // `cmd` is a command buffer outside a render pass, used for the upload.
@@ -101,6 +109,7 @@ private:
     const std::uint8_t* vram_ = nullptr;
     std::size_t vram_size_ = 0;
     std::uint32_t palette_[1024]{};
+    std::uint32_t stride_ = 0;
     std::string error_;
 };
 

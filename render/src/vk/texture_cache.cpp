@@ -223,7 +223,7 @@ VkDescriptorSet TextureCache::get(VkCommandBuffer cmd, std::uint32_t tcw, std::u
     }
 
     Entry e;
-    if (!describe_texture(tcw, tsp, 0, e.info)) {
+    if (!describe_texture(tcw, tsp, stride_, e.info)) {
         ++failed;
         entries_.emplace(key, std::move(e));  // remember the failure so it is not retried per frame
         return VK_NULL_HANDLE;
