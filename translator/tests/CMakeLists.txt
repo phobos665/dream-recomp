@@ -1,6 +1,7 @@
 add_executable(dream_translator_tests
   test_main.cpp
   test_decoder.cpp
+  test_emit.cpp
   test_config.cpp
   test_symbols.cpp
   test_switch.cpp
