@@ -506,21 +506,27 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         const Polygon& p = *item.poly;
         PipelineKey key{};
         key.depth_mode = isp_depth_mode(p.isp) & 7u;
-        // A translucent surface tests depth but does not write it: writing would hide surfaces
-        // behind it that still have to be blended in.
-        key.depth_write = (item.blended || isp_z_write_disable(p.isp)) ? 0u : 1u;
         key.cull_mode = isp_cull_mode(p.isp) & 3u;
         key.blend = item.blended ? 1u : 0u;
         key.src_blend = tsp_src_instr(p.tsp) & 7u;
         key.dst_blend = tsp_dst_instr(p.tsp) & 7u;
         key.padding = 0;
-        VkPipeline pipeline = pipeline_for(key);
-        if (!pipeline)
-            continue;
-        if (pipeline != bound) {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-            bound = pipeline;
+        // Depth writes follow the polygon's own ZWriteDis bit. A translucent polygon that asks for
+        // them (Speed Devils draws its cars and scenery that way) is drawn in two passes: the
+        // pixels that are effectively opaque write depth, so rims, tyre insides and the lift no
+        // longer show through whatever follows; the partly transparent ones only blend. Letting
+        // those write too hid the radiator grille behind a reflection layer with almost no alpha.
+        const bool wants_write = !isp_z_write_disable(p.isp);
+        const unsigned passes = (item.blended && wants_write) ? 2u : 1u;
+        key.depth_write = (!item.blended && wants_write) ? 1u : 0u;
+        VkPipeline pass_pipe[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+        pass_pipe[0] = pipeline_for(key);
+        if (passes == 2) {
+            key.depth_write = 1u;
+            pass_pipe[1] = pipeline_for(key);
         }
+        if (!pass_pipe[0] || (passes == 2 && !pass_pipe[1]))
+            continue;
         // A polygon whose texture could not be decoded draws untextured rather than not at all:
         // a flat shape in the right place says more during bring-up than a hole.
         VkDescriptorSet set = VK_NULL_HANDLE;
@@ -552,17 +558,29 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         push.mode |= static_cast<std::int32_t>(tsp_fog_control(p.tsp) << 7);
         if (tsp_colour_clamp(p.tsp))
             push.mode |= 512;
-        if (item.blended)
+        if (item.blended) {
+            push.mode |= 1024;
             ++blended_polygons;
+        }
         push.alpha_ref = geometry.alpha_ref;
         push.clip_mode = static_cast<std::int32_t>(p.tile_clip);
         push.clip[0] = p.clip_x0;
         push.clip[1] = p.clip_y0;
         push.clip[2] = p.clip_x1;
         push.clip[3] = p.clip_y1;
-        vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof push, &push);
-        vkCmdDraw(cmd, p.count, 1, p.first, 0);
+        const std::int32_t base_mode = push.mode;
+        for (unsigned pass = 0; pass < passes; ++pass) {
+            if (pass_pipe[pass] != bound) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pass_pipe[pass]);
+                bound = pass_pipe[pass];
+            }
+            // Bit 11: only the effectively opaque pixels (these write depth); bit 12: the rest.
+            push.mode = base_mode | (passes == 2 ? (pass == 1 ? 2048 : 4096) : 0);
+            vkCmdPushConstants(cmd, layout_,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                               sizeof push, &push);
+            vkCmdDraw(cmd, p.count, 1, p.first, 0);
+        }
         ++drawn_polygons;
         drawn_vertices += p.count;
     }
